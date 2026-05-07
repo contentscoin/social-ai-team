@@ -4,6 +4,8 @@ A set of Claude Code skills that work together as a complete social media team f
 
 Built to run inside [Claude Code](https://claude.ai/code).
 
+> **Just getting started?** Read [SETUP.md](SETUP.md) — a full beginner walkthrough covering Claude Code, install, MCP setup, and your first client.
+
 ---
 
 ## How the Skills Work Together
@@ -135,17 +137,28 @@ your-client-folder/
 
 ## Installation
 
-### Mac / Linux
+> **New to this?** See [SETUP.md](SETUP.md) for a full beginner walkthrough — Claude Code, MCPs, and your first client folder.
 
+### 1. Get the files
+
+**Option A — Clone with git:**
+```bash
+git clone https://github.com/stevenflanagan1/social-ai-team.git
+cd social-ai-team
+```
+
+**Option B — Download ZIP:** click the green **Code** button at the top of this repo, choose **Download ZIP**, unzip it, then open the `social-ai-team` folder in a terminal.
+
+### 2. Run the installer
+
+**Mac / Linux:**
 ```bash
 bash install.sh
 ```
 
-### Windows
+**Windows:** double-click `install.bat` (or run it from the command line).
 
-Double-click `install.bat` or run it from the command line.
-
-This copies all skills into `~/.claude/skills/` where Claude Code can find them.
+This copies all 10 skills into `~/.claude/skills/` where Claude Code can find them.
 
 ---
 
