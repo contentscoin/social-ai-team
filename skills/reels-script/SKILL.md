@@ -228,6 +228,8 @@ Avoid: text, logos, signage, extra fingers, warped faces
 
 **규칙:** 직전 회차 대비 **최소 2개 차원을 변주**합니다. 특히 훅 유형은 두 회차 연속 같은 것을 쓰지 않습니다. 각 회차 산출물에 "직전 회차 대비 변주" 1줄을 기록해 다음 회차 작성자가 참조할 수 있게 합니다.
 
+**풀 버전:** 3회차 이상 시리즈나 멀티 페르소나 캠페인은 `references/series-variation-matrix.md`의 7차원 변주 매트릭스(LOCKED/VARIABLE 정의, Health Check, 변주 휴리스틱)로 승격해 관리합니다.
+
 ---
 
 ## Phase 8 — 산출 패키지

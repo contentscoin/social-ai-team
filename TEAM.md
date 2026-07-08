@@ -1,12 +1,12 @@
 ---
 title: Social AI Team - Korean Team Manual
 version: 1.0.0
-description: Korean operations manual for the full Social AI Team system. Covers the team roster (1 director skill, 4 subagents, 4 new skills, 1 SOP layered over the 10 untouched original skills), the monthly production loop, format-to-lane routing, human approval gates, the bilingual contract boundary, MCP requirements, known contract-drift notes, installation, and the deferred roadmap.
+description: Korean operations manual for the full Social AI Team system. Covers the team roster (1 director skill, 4 subagents, 5 new skills, 1 SOP layered over the 10 untouched original skills), the monthly production loop, format-to-lane routing, human approval gates, the bilingual contract boundary, MCP requirements, known contract-drift notes, installation, and the deferred roadmap.
 ---
 
 # Social AI Team — 팀 운영 매뉴얼 (한국어판)
 
-이 문서는 Social AI Team 시스템 전체의 **팀 매뉴얼**입니다. 기존 10개 스킬(영어) 위에 한국어 팀 레이어 — 디렉터 스킬 1개, 서브에이전트 4개, 신규 스킬 4개, SOP 1개 — 를 얹은 구조를 설명합니다.
+이 문서는 Social AI Team 시스템 전체의 **팀 매뉴얼**입니다. 기존 10개 스킬(영어) 위에 한국어 팀 레이어 — 디렉터 스킬 1개, 서브에이전트 4개, 신규 스킬 5개, SOP 1개 — 를 얹은 구조를 설명합니다.
 
 > **팀 모토: "한국어로 말하고, 영어로 계약한다."**
 > 운영자와의 모든 대화·요약·승인 요청은 한국어. 파일로 오가는 계약 필드(`VISUAL DIRECTION`, `BLOTATO FLAG`, `PASS`/`WARN`/`BLOCK`, `context/*.md`, `outputs/` 폴더 규약)는 기존 스킬이 정의한 영어 표기를 한 글자도 바꾸지 않습니다.
@@ -19,15 +19,16 @@ description: Korean operations manual for the full Social AI Team system. Covers
 
 | 구분 | 이름 | 위치 | 역할 |
 |---|---|---|---|
-| **디렉터 스킬 (1)** | `/content-director` | `skills/content-director/` | **메인 스레드**에서 실행되는 팀 지휘자. 라우팅, 카피라이터 4병렬 팬아웃, 승인 게이트 회수, 컴플라이언스 게이트 강제. `context/workflow-status.md`의 **유일한 작성자** |
-| **서브에이전트 (4)** | `copywriter` | `.claude/agents/copywriter.md` | 플랫폼 파라미터형 카피라이터 — caption/linkedin/threads/x 라이터 스킬을 그대로 실행. 최대 4개 병렬 |
+| **디렉터 스킬 (1)** | `/content-director` | `skills/content-director/` | **메인 스레드**에서 실행되는 팀 지휘자. 라우팅, 카피라이터 최대 5병렬 팬아웃, 승인 게이트 회수, 컴플라이언스 게이트 강제. `context/workflow-status.md`의 **유일한 작성자** |
+| **서브에이전트 (4)** | `copywriter` | `.claude/agents/copywriter.md` | 플랫폼 파라미터형 카피라이터 — caption/linkedin/threads/x/naver 라이터 스킬을 그대로 실행. 최대 5개 병렬 |
 | | `creative-designer` | `.claude/agents/creative-designer.md` | `/social-creative-designer` 실행 + `sop/creative-designer/image-qa.md` 준수. 스토리보드 키프레임도 렌더링 |
 | | `video-producer` | `.claude/agents/video-producer.md` | 숏폼 포드 — `/reels-script`, `/ad-storyboard` 실행 + 스토리보드 계약 스크립트 검증 |
 | | `compliance-reviewer` | `.claude/agents/compliance-reviewer.md` | `/kr-guardrail-check`를 격리 컨텍스트에서 실행, `PASS`/`WARN`/`BLOCK` 판정표 반환 |
-| **신규 스킬 (4)** | `/reels-script` | `skills/reels-script/` | Reels/Shorts/TikTok 타임코드 대본 + 자막 트랙 + 클립 분할 → `outputs/videos/` |
+| **신규 스킬 (5)** | `/reels-script` | `skills/reels-script/` | Reels/Shorts/TikTok 타임코드 대본 + 자막 트랙 + 클립 분할 → `outputs/videos/` (시리즈물은 `references/series-variation-matrix.md`로 변주 관리) |
 | | `/ad-storyboard` | `skills/ad-storyboard/` | 광고 스토리보드 (6비트, strict-JSON 계약 + 검증 스크립트) → `outputs/storyboards/` |
 | | `/kr-guardrail-check` | `skills/kr-guardrail-check/` | 표시광고법·AI권리·고지 의무 + 기계적 계약 검증 → `outputs/compliance/` |
 | | `/kr-voice-localizer` | `skills/kr-voice-localizer/` | 보이스 프로파일 인테이크(`context/kr-voice-profile.md`) + 톤 QA |
+| | `/naver-blog-writer` | `skills/naver-blog-writer/` | 네이버 블로그 검색 유입형 장문 글 — 키워드 제목, 소제목·이미지 슬롯 구조, 대가성 고지 → `outputs/naver/` (**수동 발행** — Blotato 미지원) |
 | **SOP (1)** | 이미지 QA | `sop/creative-designer/image-qa.md` | 텍스트 세이프 규칙, 이중 채점, 재생성 루프 상한 — 기존 `/social-creative-designer` Phase 0의 `sop/creative-designer/` 훅으로 자동 로드 |
 | **기존 스킬 (10)** | `/social-media-manager`, `/brand-onboarding`, `/content-calendar`, `/caption-writer`, `/social-creative-designer`, `/linkedin-writer`, `/threads-writer`, `/x-writer`, `/publisher`, `/social-performance-review` | `skills/` | **무수정.** 디렉터가 인라인 실행하거나 에이전트가 그대로 따름 |
 
@@ -58,8 +59,8 @@ description: Korean operations manual for the full Social AI Team system. Covers
   ◆ 승인 게이트 1 — "이 캘린더로 진행할까요?" (한국어, 메인 스레드)
         │
         ▼
-  카피라이터 4병렬 팬아웃 ──────→ outputs/captions|linkedin|threads|x/
-  copywriter × 4 (Task, 한 메시지)  (context/는 읽기 전용, 산출 폴더 서로 겹치지 않음)
+  카피라이터 병렬 팬아웃 ───────→ outputs/captions|linkedin|threads|x|naver/
+  copywriter × 최대 5 (Task, 한 메시지) (context/는 읽기 전용, 산출 폴더 서로 겹치지 않음)
         │
         ▼
   ◆ 승인 게이트 2 — 핸드오프 검증 + "수정할 카피 있나요?" (한국어)
@@ -164,7 +165,8 @@ For manual publishing, use the Monthly Handoff Summary from /social-media-manage
 | `PASS` / `WARN` / `BLOCK` | 포스트별 판정값 | `/kr-guardrail-check` → `/content-director` (BLOCK=재작업, WARN=인간 사인오프, PASS=발행 가능) |
 | `Char count: [n]/280`, `[n]/500` | 글자 수 필드 | 플랫폼 라이터 (X는 CJK 2배 가중 → 실효 140자) |
 | `context/*.md` | `brand-style.md`, `content-calendar.md`, `best-performers.md`, `kr-voice-profile.md`, `workflow-status.md`, `upcoming-events.md`, `review-history.md` | 모든 스킬이 읽음. `workflow-status.md`는 **디렉터만 씀**. 에이전트에게 `context/`는 읽기 전용 |
-| `outputs/*` 폴더 규약 | `captions/`, `linkedin/`, `threads/`, `x/`, `creatives/`, `reviews/` (기존) + `videos/`, `storyboards/`, `compliance/` (신규) | 레인별 산출 폴더 — 서로 겹치지 않아 병렬 안전 |
+| `outputs/*` 폴더 규약 | `captions/`, `linkedin/`, `threads/`, `x/`, `creatives/`, `reviews/` (기존) + `videos/`, `storyboards/`, `compliance/`, `naver/` (신규) | 레인별 산출 폴더 — 서로 겹치지 않아 병렬 안전 |
+| `Sponsored:` / `Main keyword:` / `TAGS:` | 네이버 글 헤더 필드 | `/naver-blog-writer` → `/kr-guardrail-check` (대가성 판별·고지 검증). naver 출력에 `BLOTATO FLAG`는 **없음** — 발행은 수동 |
 | 파일명 패턴 | `[client-name]-[type]-[month]-[year].md` | 모든 산출물. `/kr-guardrail-check`가 기계적으로 검증 |
 
 ---
@@ -199,7 +201,7 @@ For manual publishing, use the Monthly Handoff Summary from /social-media-manage
 bash install.sh
 ```
 
-- **스킬 15종** → `~/.claude/skills/` (기존 10 + content-director, reels-script, ad-storyboard, kr-guardrail-check, kr-voice-localizer)
+- **스킬 16종** → `~/.claude/skills/` (기존 10 + content-director, reels-script, ad-storyboard, kr-guardrail-check, kr-voice-localizer, naver-blog-writer)
 - **에이전트 4종** → `~/.claude/agents/` (copywriter, creative-designer, video-producer, compliance-reviewer)
 - Windows는 `install.bat`.
 
@@ -225,9 +227,10 @@ mkdir my-client && cd my-client
 
 | 항목 | 내용 | 전제 |
 |---|---|---|
-| **naver-blog-writer** | 네이버 블로그 전용 라이터 — `linkedin-writer` 템플릿(전문 플랫폼 라이터 구조) 기반으로 제작 예정 | 다음 스킬 후보 1순위 |
-| **series-variation 풀 매트릭스** | 시리즈물 포맷·톤 변주 매트릭스. 현재는 디렉터의 Notes에 "두 달 연속 같은 포맷/톤이면 변주 제안" 체크로 축약 반영됨 | 운영 데이터 축적 후 |
 | **Runway / Seedance 실행 연동** | 현재 `/reels-script`는 엔진용 프롬프트 스펙을 **텍스트 산출물**로만 제공 (MCP를 발명하지 않는다는 원칙). 해당 MCP가 실제로 생기면 실행 연동 | 공식 MCP 출시 시 |
+| **네이버 블로그 자동 발행** | `/naver-blog-writer`의 산출물은 현재 수동 발행. 네이버 API/MCP가 쓸 만해지면 발행 연동 | 공식 연동 수단 확보 시 |
+
+구현 완료되어 로드맵에서 졸업한 항목: **naver-blog-writer** (`skills/naver-blog-writer/`), **series-variation 풀 매트릭스** (`skills/reels-script/references/series-variation-matrix.md`).
 
 ---
 

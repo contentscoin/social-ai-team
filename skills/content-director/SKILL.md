@@ -30,11 +30,12 @@ description: Korean-speaking team director layered over /social-media-manager; r
     │   ├── /publisher                   → Blotato 스케줄링
     │   └── /social-performance-review   → outputs/reviews/
     │
-    ├── ~/.claude/agents/copywriter.md          (카피라이터 — 최대 4개 병렬)
+    ├── ~/.claude/agents/copywriter.md          (카피라이터 — 최대 5개 병렬)
     │   ├── /caption-writer     → outputs/captions/   (instagram/facebook)
     │   ├── /linkedin-writer    → outputs/linkedin/
     │   ├── /threads-writer     → outputs/threads/
-    │   └── /x-writer           → outputs/x/
+    │   ├── /x-writer           → outputs/x/
+    │   └── /naver-blog-writer  → outputs/naver/      (발행은 수동 — Blotato 미지원)
     │
     ├── ~/.claude/agents/creative-designer.md   (크리에이티브 디자이너)
     │   └── /social-creative-designer (+ sop/creative-designer/image-qa.md)
@@ -75,7 +76,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
 브랜드 셋업: [완료 / 미완료]
 이번 달 캘린더: [있음 / 미작성]
 캡션: [[월] 작성 완료 / 미작성]
-플랫폼 포스트: [LinkedIn n건 / Threads n건 / X n건 / 미작성]
+플랫폼 포스트: [LinkedIn n건 / Threads n건 / X n건 / 네이버 n건 / 미작성]
 비주얼: [n건 완료 / 미착수]  |  비디오·스토리보드: [n건 / 미착수]
 컴플라이언스: [PASS / WARN 대기 / 미실행]
 지난 리뷰: [[월], 점수 x/10 / 기록 없음]
@@ -119,21 +120,22 @@ description: Korean-speaking team director layered over /social-media-manager; r
 1. `/content-calendar`를 메인 스레드에서 인라인 실행 → `context/content-calendar.md` 생성
 2. **일시정지 — 캘린더 승인 게이트 (한국어):**
    > "이번 달 캘린더 요약입니다. [요약 테이블] 이 캘린더대로 카피 작성에 들어가도 될까요? 수정할 슬롯이 있으면 말씀해주세요."
-3. 승인되면, 캘린더에 등장하는 플랫폼을 확인하고 **하나의 메시지에서 최대 4개의 Task를 병렬로 호출**하여 `copywriter` 에이전트를 팬아웃합니다:
+3. 승인되면, 캘린더에 등장하는 플랫폼을 확인하고 **하나의 메시지에서 최대 5개의 Task를 병렬로 호출**하여 `copywriter` 에이전트를 팬아웃합니다:
 
    ```
-   Task 1 → copywriter  (platform: instagram/facebook) — /caption-writer  실행 → outputs/captions/
-   Task 2 → copywriter  (platform: linkedin)           — /linkedin-writer 실행 → outputs/linkedin/
-   Task 3 → copywriter  (platform: threads)            — /threads-writer  실행 → outputs/threads/
-   Task 4 → copywriter  (platform: x)                  — /x-writer        실행 → outputs/x/
+   Task 1 → copywriter  (platform: instagram/facebook) — /caption-writer     실행 → outputs/captions/
+   Task 2 → copywriter  (platform: linkedin)           — /linkedin-writer    실행 → outputs/linkedin/
+   Task 3 → copywriter  (platform: threads)            — /threads-writer     실행 → outputs/threads/
+   Task 4 → copywriter  (platform: x)                  — /x-writer           실행 → outputs/x/
+   Task 5 → copywriter  (platform: naver)              — /naver-blog-writer  실행 → outputs/naver/
    ```
 
-   - 캘린더에 있는 플랫폼만 디스패치합니다 (최대 4개).
+   - 캘린더에 있는 플랫폼만 디스패치합니다 (최대 5개).
    - 각 Task 프롬프트에 명시: 읽을 파일(`context/brand-style.md`, `context/content-calendar.md`, `context/best-performers.md`, `context/kr-voice-profile.md` 있으면), 쓸 폴더(해당 플랫폼 1개), **승인 게이트에서 멈추지 말고 초안 전체를 완성해 결과만 보고**할 것, `VISUAL DIRECTION` / `BLOTATO FLAG` 필드는 영어 그대로 쓸 것, `context/workflow-status.md`는 절대 건드리지 말 것.
-   - **이 병렬화가 안전한 이유:** 에이전트에게 `context/`는 읽기 전용이고, `outputs/captions/`·`outputs/linkedin/`·`outputs/threads/`·`outputs/x/`는 서로 겹치지 않는(disjoint) 폴더이기 때문입니다.
-4. 4개(또는 그 이하)의 Task가 **전부 돌아온 뒤**, Phase 3 핸드오프 검증 테이블로 산출물을 확인합니다.
+   - **이 병렬화가 안전한 이유:** 에이전트에게 `context/`는 읽기 전용이고, `outputs/captions/`·`outputs/linkedin/`·`outputs/threads/`·`outputs/x/`·`outputs/naver/`는 서로 겹치지 않는(disjoint) 폴더이기 때문입니다.
+4. 디스패치한 Task가 **전부 돌아온 뒤**, Phase 3 핸드오프 검증 테이블로 산출물을 확인합니다.
 5. 검증 통과 후 **단일 승인 게이트 (한국어)** — 플랫폼별로 따로 묻지 않고 한 번에 묻습니다:
-   > "4개 플랫폼 카피가 모두 완성됐습니다. [플랫폼별 건수·파일 경로 요약] 수정할 포스트가 있을까요, 아니면 비주얼/비디오 제작으로 넘어갈까요?"
+   > "모든 플랫폼 카피가 완성됐습니다. [플랫폼별 건수·파일 경로 요약] 수정할 포스트가 있을까요, 아니면 비주얼/비디오 제작으로 넘어갈까요?"
 6. 승인되면 Route G(숏폼 레인 라우팅)로 비주얼·비디오 제작을 배정합니다.
 7. 모든 제작이 끝나면 Phase 4 컴플라이언스 게이트 → Phase 5 월간 핸드오프 요약으로 진행합니다.
 
@@ -176,7 +178,9 @@ description: Korean-speaking team director layered over /social-media-manager; r
 ### Route F — 플랫폼 특화 콘텐츠
 **트리거:** 운영자가 LinkedIn, Threads, X 콘텐츠를 특정해서 요청.
 
-> "어느 플랫폼 콘텐츠가 필요하세요? LinkedIn, Threads, X, 아니면 복수 플랫폼인가요?"
+> "어느 플랫폼 콘텐츠가 필요하세요? LinkedIn, Threads, X, 네이버 블로그, 아니면 복수 플랫폼인가요?"
+
+(네이버 블로그가 포함되면: 발행은 Blotato가 아니라 수동입니다 — 6단계에서 네이버 건은 수동 발행 핸드오프로 분리합니다.)
 
 절차:
 1. 플랫폼 확정 — 복수라면 Route B 3단계와 동일하게 **한 메시지에서 병렬 Task**로 `copywriter`를 팬아웃 (단일이면 Task 1개)
@@ -214,7 +218,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
 | 실행 방식 | 대상 | 이유 |
 |---|---|---|
 | **메인 스레드 인라인** (SKILL.md를 읽고 모든 단계·게이트를 그대로 수행) | `/brand-onboarding`, `/content-calendar`, `/publisher`, `/social-performance-review` | 질문과 승인 게이트가 촘촘한 순차 스킬 — 게이트가 원래 설계대로 사람에게 닿아야 함 |
-| **서브에이전트 Task** | `copywriter`(4개 병렬), `creative-designer`, `video-producer`, `compliance-reviewer` | 산출 폴더가 겹치지 않는 제작·검수 작업 — 병렬화 이득이 크고, 승인은 어차피 디렉터가 회수 |
+| **서브에이전트 Task** | `copywriter`(최대 5개 병렬), `creative-designer`, `video-producer`, `compliance-reviewer` | 산출 폴더가 겹치지 않는 제작·검수 작업 — 병렬화 이득이 크고, 승인은 어차피 디렉터가 회수 |
 
 에이전트 디스패치 공통 규칙 (모든 Task 프롬프트에 포함):
 1. 읽을 컨텍스트 파일 목록을 명시 — `context/`는 **읽기 전용**
@@ -239,6 +243,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
 | copywriter → `/linkedin-writer` | `outputs/linkedin/` 파일 존재 + 전 포스트에 `BLOTATO FLAG` 필드 | `/publisher` |
 | copywriter → `/threads-writer` | `outputs/threads/` 파일 존재 + 전 포스트에 `BLOTATO FLAG` 필드 | `/publisher` |
 | copywriter → `/x-writer` | `outputs/x/` 파일 존재 + 전 포스트에 `BLOTATO FLAG` 필드 | `/publisher` |
+| copywriter → `/naver-blog-writer` | `outputs/naver/` 파일 존재 + 전 글에 `TITLE`·`TAGS`·이미지 슬롯별 `VISUAL DIRECTION` 필드 + 대가성 글엔 고지 문구 | `creative-designer`(이미지 슬롯), 컴플라이언스 게이트, 수동 발행 핸드오프 (`/publisher` 대상 아님) |
 | creative-designer → `/social-creative-designer` | `outputs/creatives/`에 기대한 이미지 파일 + `sop/creative-designer/image-qa.md` QA 통과 기록 | 월간 핸드오프 |
 | **video-producer → `/reels-script`** | **`outputs/videos/` 파일 존재 + 캘린더의 해당 reel 슬롯과 1:1 대응** | 컴플라이언스 게이트, 월간 핸드오프 |
 | **video-producer → `/ad-storyboard`** | **`outputs/storyboards/` 파일 존재 + 캠페인 슬롯과 대응** | 컴플라이언스 게이트, 월간 핸드오프 |
@@ -254,7 +259,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
 
 **콘텐츠 완성과 `/publisher` 사이에 반드시 실행되는 게이트입니다. 건너뛸 수 없습니다.**
 
-1. 발행 대상 산출물(captions, linkedin, threads, x, videos, storyboards)이 전부 준비되면, `compliance-reviewer` 에이전트를 디스패치합니다 — 에이전트는 `/kr-guardrail-check`를 실행하고 결과 파일을 `outputs/compliance/`에 저장합니다.
+1. 발행 대상 산출물(captions, linkedin, threads, x, naver, videos, storyboards)이 전부 준비되면, `compliance-reviewer` 에이전트를 디스패치합니다 — 에이전트는 `/kr-guardrail-check`를 실행하고 결과 파일을 `outputs/compliance/`에 저장합니다.
 2. 결과 파일의 verdict(포스트별 `PASS` / `WARN` / `BLOCK` — 영어 계약 값)를 읽고 다음과 같이 처리합니다:
 
 | Verdict | 디렉터의 처리 |
@@ -284,6 +289,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
   LinkedIn:          [n]건 (outputs/linkedin/) / 미작성
   Threads:           [n]건 (outputs/threads/) / 미작성
   X:                 [n]건 (outputs/x/) / 미작성
+  네이버 블로그:     [n]건 (outputs/naver/) / 미작성  ← 수동 발행
   이미지:            [n]건 (outputs/creatives/)
   릴스 대본:         [n]건 (outputs/videos/)
   광고 스토리보드:   [n]건 (outputs/storyboards/)
@@ -296,6 +302,7 @@ description: Korean-speaking team director layered over /social-media-manager; r
 발행 상태
   Blotato 스케줄:    [n건 / 미스케줄]
   플랫폼:            [목록 / —]
+  수동 발행 대기:    [네이버 블로그 n건 — 네이버 에디터에서 직접 발행]
 
 다음 액션
   □ 클라이언트: 전체 콘텐츠 최종 확인
@@ -326,6 +333,7 @@ Last updated: [date]
 - [ ] LinkedIn posts — [n] written / not started
 - [ ] Threads posts — [n] written / not started
 - [ ] X posts — [n] written / not started
+- [ ] Naver Blog posts — [n] written / not started (manual publish)
 - [ ] Visuals — [n of n] complete
 - [ ] Reels scripts — [n of n] complete (outputs/videos/)
 - [ ] Ad storyboards — [n of n] complete (outputs/storyboards/)
@@ -381,7 +389,7 @@ Last updated: [date]
     ├── /social-media-manager  — 이 스킬이 계승하는 원본 오케스트레이터 (Route A–F의 출처)
     │
     ├── copywriter (~/.claude/agents/copywriter.md)
-    │       /caption-writer · /linkedin-writer · /threads-writer · /x-writer
+    │       /caption-writer · /linkedin-writer · /threads-writer · /x-writer · /naver-blog-writer
     ├── creative-designer (~/.claude/agents/creative-designer.md)
     │       /social-creative-designer + sop/creative-designer/image-qa.md
     ├── video-producer (~/.claude/agents/video-producer.md)
