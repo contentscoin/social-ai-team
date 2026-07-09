@@ -2,9 +2,8 @@
 // Automated stages run `claude -p` headless in the client folder and stream logs;
 // interview-style stages open an interactive terminal running /content-director.
 const { spawn } = require('child_process');
-const path = require('path');
+const { runCmd, envWithPath, isWin } = require('./proc');
 
-const isWin = process.platform === 'win32';
 const isMac = process.platform === 'darwin';
 
 let current = null;
@@ -18,7 +17,7 @@ const STAGES = {
     prompt:
       'content-director 스킬의 Route B 1단계만 수행: content-calendar 스킬을 인라인 실행해 context/content-calendar.md를 생성하라. ' +
       '운영자 승인 게이트에서 대기하지 말고 캘린더를 완성해 요약만 출력하고 종료하라 (승인은 앱에서 진행한다). ' +
-      'context/brand-style.md가 없으면 아무것도 만들지 말고 "BRAND MISSING"만 출력하라.',
+      'context/brand-style.md가 없으면 아무것도 만들지 말고 BRAND MISSING 한 줄만 출력하라.',
   },
   copy: {
     label: '카피 병렬 팬아웃',
@@ -57,7 +56,7 @@ const STAGES = {
     label: '월말 성과 리뷰',
     prompt:
       'content-director 스킬의 Route C 1단계만 수행: social-performance-review 스킬을 인라인 실행하라. ' +
-      '데이터 입력이 필요하면 outputs/reviews/ 안의 CSV·이미지 파일을 찾아 사용하고, 없으면 "REVIEW DATA MISSING"만 출력하고 종료하라.',
+      '데이터 입력이 필요하면 outputs/reviews/ 안의 CSV·이미지 파일을 찾아 사용하고, 없으면 REVIEW DATA MISSING 한 줄만 출력하고 종료하라.',
   },
 };
 
@@ -72,25 +71,18 @@ function runStage(dir, stage, opts = {}, onLine) {
     '--permission-mode', 'acceptEdits',
     '--add-dir', dir,
   ];
-  return new Promise((resolve) => {
-    const child = spawn('claude', args, { cwd: dir, shell: isWin });
-    current = child;
-    let out = '';
-    const feed = (buf) => {
-      const text = buf.toString();
-      out += text;
-      text.split(/\r?\n/).filter(Boolean).forEach((l) => onLine && onLine(l));
-    };
-    child.stdout.on('data', feed);
-    child.stderr.on('data', feed);
-    child.on('error', (e) => { current = null; resolve({ ok: false, code: -1, out: out + e.message }); });
-    child.on('close', (code) => { current = null; resolve({ ok: code === 0, code, out }); });
-  });
+  return runCmd('claude', args, onLine, {
+    cwd: dir,
+    onSpawn: (child) => { current = child; },
+  }).then((r) => { current = null; return r; });
 }
 
 function stopCurrent() {
   if (!current) return { ok: true, wasRunning: false };
-  try { current.kill(); } catch { /* already gone */ }
+  try {
+    if (isWin && current.pid) spawn('taskkill', ['/pid', String(current.pid), '/T', '/F'], { windowsHide: true });
+    else current.kill();
+  } catch { /* already gone */ }
   current = null;
   return { ok: true, wasRunning: true };
 }
@@ -98,14 +90,15 @@ function stopCurrent() {
 // Interactive stages (brand onboarding interview, free-form direction) — open a real terminal.
 function openInteractiveTerminal(dir) {
   const cmd = 'claude "/content-director"';
+  const env = envWithPath();
   if (isWin) {
-    spawn('cmd', ['/c', 'start', 'cmd', '/k', `cd /d "${dir}" && ${cmd}`], { detached: true, shell: false });
+    spawn('cmd', ['/c', 'start', '"Social AI Team"', 'cmd', '/k', `cd /d "${dir}" && ${cmd}`], { detached: true, shell: false, env });
   } else if (isMac) {
     const script = `tell application "Terminal" to do script "cd ${JSON.stringify(dir)} && ${cmd}"`;
-    spawn('osascript', ['-e', script], { detached: true });
+    spawn('osascript', ['-e', script], { detached: true, env });
   } else {
     const term = process.env.TERMINAL || 'x-terminal-emulator';
-    spawn(term, ['-e', `bash -lc 'cd ${JSON.stringify(dir)} && ${cmd}; exec bash'`], { detached: true });
+    spawn(term, ['-e', `bash -lc 'cd ${JSON.stringify(dir)} && ${cmd}; exec bash'`], { detached: true, env });
   }
   return { ok: true };
 }

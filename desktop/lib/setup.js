@@ -1,17 +1,29 @@
 // Setup wizard backend — "설치했을 때 적용": skills → ~/.claude, Codex CLI + OAuth, MCP 등록
-const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { runCmd, resolveCmd } = require('./proc');
+
+let openExternal = () => {};
+try {
+  const { shell } = require('electron');
+  openExternal = (u) => shell.openExternal(u).catch(() => {});
+} catch { /* running outside electron (tests) */ }
 
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
-const isWin = process.platform === 'win32';
+const CLAUDE_USER_CONFIG = path.join(HOME, '.claude.json');
 
 // Where the bundled skills/agents/sop live. Packaged: resources/payload. Dev: repo root.
-function payloadRoot() {
+function payloadPaths() {
   const packaged = path.join(process.resourcesPath || '', 'payload');
-  if (process.resourcesPath && fs.existsSync(packaged)) return packaged;
+  if (process.resourcesPath && fs.existsSync(packaged)) {
+    return {
+      skills: path.join(packaged, 'skills'),
+      agents: path.join(packaged, 'agents'),
+      sop: path.join(packaged, 'sop'),
+    };
+  }
   const repo = path.resolve(__dirname, '..', '..');
   return {
     skills: path.join(repo, 'skills'),
@@ -21,58 +33,31 @@ function payloadRoot() {
   };
 }
 
-function payloadPaths() {
-  const root = payloadRoot();
-  if (root.dev) return root;
-  return {
-    skills: path.join(root, 'skills'),
-    agents: path.join(root, 'agents'),
-    sop: path.join(root, 'sop'),
-  };
-}
-
-function which(cmd) {
-  return new Promise((resolve) => {
-    execFile(isWin ? 'where' : 'which', [cmd], (err, stdout) => {
-      resolve(err ? null : stdout.split(/\r?\n/)[0].trim() || null);
-    });
-  });
-}
-
-function run(cmd, args, onLine, opts = {}) {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, args, { shell: isWin, ...opts });
-    let out = '';
-    const feed = (buf) => {
-      const text = buf.toString();
-      out += text;
-      text.split(/\r?\n/).filter(Boolean).forEach((l) => onLine && onLine(l));
-    };
-    child.stdout.on('data', feed);
-    child.stderr.on('data', feed);
-    child.on('error', (e) => resolve({ ok: false, code: -1, out: out + e.message }));
-    child.on('close', (code) => resolve({ ok: code === 0, code, out }));
-  });
+async function cliVersion(name) {
+  const abs = resolveCmd(name);
+  const r = await runCmd(name, ['--version'], null, { timeoutMs: 15000 });
+  return { found: r.ok, path: abs || (r.ok ? name + ' (PATH)' : null), version: r.ok ? r.out.trim().split(/\r?\n/)[0] : null };
 }
 
 async function checkEnvironment() {
-  const [claude, codex, node] = await Promise.all([which('claude'), which('codex'), which('node')]);
+  const [claude, codex, node] = await Promise.all([cliVersion('claude'), cliVersion('codex'), cliVersion('node')]);
   let codexAuthed = false;
-  if (codex) {
-    const r = await run('codex', ['login', 'status'], null);
+  if (codex.found) {
+    const r = await runCmd('codex', ['login', 'status'], null, { timeoutMs: 20000 });
     codexAuthed = /logged in using/i.test(r.out);
   }
-  const skillsInstalled = fs.existsSync(path.join(CLAUDE_DIR, 'skills', 'content-director', 'SKILL.md'));
-  const agentsInstalled = fs.existsSync(path.join(CLAUDE_DIR, 'agents', 'copywriter.md'));
   return {
     platform: process.platform,
-    node: !!node,
-    claude: !!claude,
-    codex: !!codex,
+    node: node.found,
+    claude: claude.found,
+    codex: codex.found,
     codexAuthed,
-    skillsInstalled,
-    agentsInstalled,
+    skillsInstalled: fs.existsSync(path.join(CLAUDE_DIR, 'skills', 'content-director', 'SKILL.md')),
+    agentsInstalled: fs.existsSync(path.join(CLAUDE_DIR, 'agents', 'copywriter.md')),
+    paths: { claude: claude.path, codex: codex.path, node: node.path },
+    versions: { claude: claude.version, codex: codex.version, node: node.version },
     claudeInstallUrl: 'https://code.claude.com/docs/en/quickstart',
+    nodeInstallUrl: 'https://nodejs.org/',
   };
 }
 
@@ -83,6 +68,7 @@ function copyDir(src, dst) {
 
 async function installSkills() {
   const p = payloadPaths();
+  if (!fs.existsSync(p.skills)) return { ok: false, tail: `payload not found: ${p.skills}` };
   const installed = [];
   for (const name of fs.readdirSync(p.skills)) {
     const src = path.join(p.skills, name);
@@ -91,37 +77,68 @@ async function installSkills() {
     installed.push(name);
   }
   copyDir(p.agents, path.join(CLAUDE_DIR, 'agents'));
-  // sop payload is copied into each client folder at creation time (workspace.js);
-  // keep a master copy next to skills for reference.
   copyDir(p.sop, path.join(CLAUDE_DIR, 'social-ai-team-sop'));
   return { ok: true, skills: installed, agents: fs.readdirSync(path.join(CLAUDE_DIR, 'agents')) };
 }
 
 async function installCodexCli(onLine) {
-  if (await which('codex')) return { ok: true, already: true };
-  onLine && onLine('Installing @openai/codex via npm…');
-  return run('npm', ['install', '-g', '@openai/codex'], onLine);
+  if (resolveCmd('codex')) return { ok: true, already: true };
+  const node = await cliVersion('node');
+  if (!node.found) {
+    return { ok: false, needNode: true, tail: 'Node.js가 없습니다 — https://nodejs.org 에서 LTS 설치 후 다시 시도하세요.' };
+  }
+  onLine && onLine('npm으로 @openai/codex 설치 중…');
+  return runCmd('npm', ['install', '-g', '@openai/codex'], onLine, { timeoutMs: 300000 });
 }
 
-// PC에는 브라우저가 있으므로 표준 OAuth 로그인 사용 (로컬 콜백 서버 방식).
-// 브라우저가 안 열리는 환경이면 --device-auth 코드 흐름으로 폴백.
+// PC에는 브라우저가 있으므로 표준 OAuth 우선. GUI에서 스폰된 프로세스가 브라우저를
+// 못 여는 경우를 대비해, 출력에서 URL을 잡아 Electron이 직접 연다.
+// 브라우저 콜백 흐름이 실패하면 디바이스 코드 흐름으로 폴백.
 async function codexOAuthLogin(onLine) {
-  if (!(await which('codex'))) return { ok: false, out: 'codex CLI not installed' };
-  const status = await run('codex', ['login', 'status'], null);
+  if (!resolveCmd('codex') && !(await cliVersion('codex')).found) {
+    return { ok: false, tail: 'codex CLI가 없습니다 — 먼저 "Codex 설치"를 실행하세요.' };
+  }
+  const status = await runCmd('codex', ['login', 'status'], null, { timeoutMs: 20000 });
   if (/logged in using/i.test(status.out)) return { ok: true, already: true };
-  onLine && onLine('Opening browser for Codex OAuth…');
-  const r = await run('codex', ['login'], onLine);
-  if (r.ok) return r;
-  onLine && onLine('Browser flow failed — falling back to device code. Open the URL shown below and enter the code.');
-  return run('codex', ['login', '--device-auth'], onLine);
+
+  const urls = [];
+  const sniff = (l) => {
+    onLine && onLine(l);
+    const m = l.match(/https?:\/\/\S+/);
+    if (m && !urls.includes(m[0])) {
+      urls.push(m[0]);
+      openExternal(m[0]);
+      onLine && onLine(`→ 브라우저에서 열었습니다: ${m[0]}`);
+    }
+  };
+  const r = await runCmd('codex', ['login'], sniff, { timeoutMs: 300000 });
+  if (r.ok) return { ...r, urls };
+  onLine && onLine('브라우저 콜백 흐름 실패 — 디바이스 코드로 전환합니다. 아래 URL을 열고 코드를 입력하세요.');
+  const r2 = await runCmd('codex', ['login', '--device-auth'], sniff, { timeoutMs: 600000 });
+  return { ...r2, urls };
 }
 
+// user-scope MCP 등록: CLI 우선, 실패하면 ~/.claude.json에 직접 병합 (백업 후).
 async function registerCodexMcp(onLine) {
-  if (!(await which('claude'))) return { ok: false, out: 'claude CLI not installed' };
-  // User-scope registration so every client folder sees mcp__codex__codex.
-  const r = await run('claude', ['mcp', 'add', '-s', 'user', 'codex', '--', 'codex', 'mcp-server'], onLine);
-  if (!r.ok && /already exists/i.test(r.out)) return { ok: true, already: true };
-  return r;
+  const codexPath = resolveCmd('codex') || 'codex';
+  const r = await runCmd('claude', ['mcp', 'add', '-s', 'user', 'codex', '--', codexPath, 'mcp-server'], onLine, { timeoutMs: 60000 });
+  if (r.ok || /already exists/i.test(r.out)) return { ok: true, via: 'cli', already: /already exists/i.test(r.out) };
+
+  onLine && onLine('claude CLI 등록 실패 — ~/.claude.json에 직접 기록합니다.');
+  try {
+    let cfg = {};
+    if (fs.existsSync(CLAUDE_USER_CONFIG)) {
+      fs.copyFileSync(CLAUDE_USER_CONFIG, CLAUDE_USER_CONFIG + '.bak');
+      cfg = JSON.parse(fs.readFileSync(CLAUDE_USER_CONFIG, 'utf8'));
+    }
+    cfg.mcpServers = cfg.mcpServers || {};
+    cfg.mcpServers.codex = { type: 'stdio', command: codexPath, args: ['mcp-server'], env: {} };
+    fs.writeFileSync(CLAUDE_USER_CONFIG, JSON.stringify(cfg, null, 2));
+    onLine && onLine(`기록 완료: ${CLAUDE_USER_CONFIG} (백업: .bak)`);
+    return { ok: true, via: 'config', command: codexPath };
+  } catch (e) {
+    return { ok: false, tail: `CLI(${r.tail}) / 직접 기록(${e.message}) 모두 실패` };
+  }
 }
 
 module.exports = { checkEnvironment, installSkills, installCodexCli, codexOAuthLogin, registerCodexMcp, payloadPaths };

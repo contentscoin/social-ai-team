@@ -19,21 +19,38 @@ async function refreshSetup() {
   $('#btn-codex-login').disabled = !s.codex || s.codexAuthed;
 }
 
+function reportResult(label, r) {
+  if (r.ok) {
+    log('setup', `${label} 완료${r.already ? ' (이미 되어 있음)' : ''}${r.via ? ` [${r.via}]` : ''}`);
+  } else {
+    log('setup', `${label} 실패:`);
+    log('setup', r.tail || r.out || '원인 불명 — 로그 확인');
+    alert(`${label} 실패\n\n${(r.tail || r.out || '').slice(-400)}`);
+  }
+}
+
 $('#btn-install-skills').onclick = async () => {
   const r = await window.api.setup.installSkills();
-  log('setup', r.ok ? `스킬 ${r.skills.length}종 + 에이전트 설치 완료` : '스킬 설치 실패');
+  if (r.ok) log('setup', `스킬 ${r.skills.length}종 + 에이전트 설치 완료`);
+  else reportResult('스킬 설치', r);
   refreshSetup();
 };
-$('#btn-install-codex').onclick = async () => { await window.api.setup.installCodex(); refreshSetup(); };
+$('#btn-install-codex').onclick = async () => {
+  const r = await window.api.setup.installCodex();
+  reportResult('Codex 설치', r);
+  refreshSetup();
+};
 $('#btn-codex-login').onclick = async () => {
-  log('setup', '브라우저에서 OAuth 로그인을 진행하세요…');
+  switchTab('logs');
+  log('setup', 'Codex OAuth 시작 — 브라우저가 자동으로 열립니다. 안 열리면 로그의 URL을 직접 여세요.');
   const r = await window.api.setup.codexLogin();
-  log('setup', r.ok ? 'Codex 로그인 완료' : 'Codex 로그인 실패 — 로그 확인');
+  reportResult('Codex 로그인', r);
   refreshSetup();
 };
 $('#btn-register-mcp').onclick = async () => {
+  switchTab('logs');
   const r = await window.api.setup.registerMcp();
-  log('setup', r.ok ? 'codex MCP 등록 완료 (user scope)' : 'MCP 등록 실패 — 로그 확인');
+  reportResult('codex MCP 등록', r);
 };
 
 // ---- Clients ------------------------------------------------------------------
