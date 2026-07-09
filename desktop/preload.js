@@ -24,6 +24,14 @@ contextBridge.exposeInMainWorld('api', {
     stop: () => ipcRenderer.invoke('pipe:stop'),
     openTerminal: (dir) => ipcRenderer.invoke('pipe:openTerminal', dir),
   },
+  engine: {
+    get: () => ipcRenderer.invoke('cfg:getEngine'),
+    set: (engine) => ipcRenderer.invoke('cfg:setEngine', engine),
+  },
+  chat: {
+    send: (dir, msg) => ipcRenderer.invoke('chat:send', dir, msg),
+    reset: (dir) => ipcRenderer.invoke('chat:reset', dir),
+  },
   update: {
     version: () => ipcRenderer.invoke('update:version'),
     check: () => ipcRenderer.invoke('update:check'),

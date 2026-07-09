@@ -108,8 +108,12 @@ function stopCurrent() {
 }
 
 // Interactive stages (brand onboarding interview, free-form direction) — open a real terminal.
-function openInteractiveTerminal(dir, cmdOverride) {
-  const cmd = cmdOverride || 'claude "/content-director"';
+// `engineOrCmd`: 'claude' | 'codex' picks the default command; a full string overrides it.
+function openInteractiveTerminal(dir, engineOrCmd) {
+  let cmd;
+  if (engineOrCmd === 'codex') cmd = 'codex';
+  else if (engineOrCmd === 'claude' || !engineOrCmd) cmd = 'claude "/content-director"';
+  else cmd = engineOrCmd; // explicit command string (e.g. "ima2 setup")
   const env = envWithPath();
   if (isWin) {
     // `start`의 인용 규칙이 spawn 인자 이스케이프와 충돌하므로 임시 .cmd 스크립트를 경유한다.

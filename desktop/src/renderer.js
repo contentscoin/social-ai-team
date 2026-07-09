@@ -98,10 +98,73 @@ async function selectClient(c) {
   await refreshClients();
   await refreshDashboard();
   await refreshOutputs();
+  $('#chat-log').innerHTML = '';
 }
 
 $('#btn-open-folder').onclick = () => currentClient && window.api.ws.openFolder(currentClient.dir);
 $('#btn-terminal').onclick = () => currentClient && window.api.pipe.openTerminal(currentClient.dir);
+
+// ---- Engine selector --------------------------------------------------------
+const ENGINE_HINT = {
+  claude: 'Claude — 팀 전체(디렉터·서브에이전트·스킬) 실행. 파이프라인 단계는 항상 Claude로 동작합니다.',
+  codex: 'Codex — 앱 내 대화·외부 터미널에서 Codex 세션 사용(일반 작업·이미지 생성). 팀 오케스트레이션(디렉터/서브에이전트)은 Claude 전용입니다.',
+};
+async function initEngine() {
+  const e = await window.api.engine.get();
+  applyEngineUI(e);
+}
+function applyEngineUI(e) {
+  for (const b of $$('#engine-seg button')) b.classList.toggle('active', b.dataset.engine === e);
+  $('#engine-hint').textContent = ENGINE_HINT[e] || '';
+  $('#chat-engine').textContent = e === 'codex' ? 'Codex' : 'Claude';
+}
+for (const b of $$('#engine-seg button')) {
+  b.onclick = async () => {
+    const e = await window.api.engine.set(b.dataset.engine);
+    applyEngineUI(e);
+    log('setup', `엔진 전환: ${e}`);
+  };
+}
+
+// ---- In-app director chat ---------------------------------------------------
+let chatBusy = false;
+function addMsg(kind, text) {
+  const d = document.createElement('div');
+  d.className = `msg ${kind}`;
+  d.textContent = text;
+  $('#chat-log').appendChild(d);
+  $('#chat-log').scrollTop = $('#chat-log').scrollHeight;
+  return d;
+}
+async function sendChat() {
+  if (!currentClient) { alert('클라이언트를 먼저 선택하세요'); return; }
+  const input = $('#chat-input');
+  const msg = input.value.trim();
+  if (!msg || chatBusy) return;
+  chatBusy = true;
+  $('#btn-chat-send').disabled = true;
+  input.value = '';
+  addMsg('user', msg);
+  const thinking = addMsg('think', '디렉터가 작업 중…');
+  const r = await window.api.chat.send(currentClient.dir, msg);
+  thinking.remove();
+  addMsg(r.ok ? 'dir' : 'err', r.text);
+  chatBusy = false;
+  $('#btn-chat-send').disabled = false;
+  input.focus();
+  await refreshDashboard();
+  await refreshOutputs();
+}
+$('#btn-chat-send').onclick = sendChat;
+$('#chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendChat(); }
+});
+$('#btn-chat-reset').onclick = async () => {
+  if (!currentClient) return;
+  await window.api.chat.reset(currentClient.dir);
+  $('#chat-log').innerHTML = '';
+  addMsg('think', '새 대화를 시작합니다. (이전 세션 컨텍스트 초기화)');
+};
 
 // ---- Dashboard ------------------------------------------------------------------
 async function refreshDashboard() {
@@ -225,3 +288,4 @@ window.api.onUpdate(async (u) => {
 refreshSetup();
 refreshClients();
 initUpdatePanel();
+initEngine();

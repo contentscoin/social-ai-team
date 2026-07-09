@@ -4,6 +4,8 @@ const path = require('path');
 const setup = require('./lib/setup');
 const workspace = require('./lib/workspace');
 const pipeline = require('./lib/pipeline');
+const config = require('./lib/config');
+const chat = require('./lib/chat');
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -87,4 +89,10 @@ ipcMain.handle('pipe:runStage', (_e, dir, stage, opts) =>
   pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }))
 );
 ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
-ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir));
+ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir, config.getEngine()));
+
+// ---- Engine + in-app director chat -----------------------------------------
+ipcMain.handle('cfg:getEngine', () => config.getEngine());
+ipcMain.handle('cfg:setEngine', (_e, engine) => config.setEngine(engine).engine);
+ipcMain.handle('chat:send', (_e, dir, msg) => chat.send(dir, msg, (line) => send('log', { source: 'chat', line })));
+ipcMain.handle('chat:reset', (_e, dir) => chat.reset(dir));
