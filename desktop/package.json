@@ -1,0 +1,36 @@
+{
+  "name": "social-ai-team-desktop",
+  "productName": "Social AI Team",
+  "version": "0.1.0",
+  "description": "Desktop control tower for the Social AI Team — installs the skills, authenticates Codex, and drives the content pipeline per client.",
+  "main": "main.js",
+  "author": "contentscoin",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "kr.contentscoin.socialaiteam",
+    "productName": "Social AI Team",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "lib/**", "src/**", "assets/**"],
+    "extraResources": [
+      { "from": "../skills", "to": "payload/skills" },
+      { "from": "../.claude/agents", "to": "payload/agents" },
+      { "from": "../sop", "to": "payload/sop" },
+      { "from": "../TEAM.md", "to": "payload/TEAM.md" }
+    ],
+    "win": { "target": "nsis", "icon": "assets/icon.png" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "mac": { "target": "dmg", "icon": "assets/icon.png", "category": "public.app-category.productivity" },
+    "linux": { "target": "AppImage", "icon": "assets/icon.png", "category": "Office" }
+  }
+}

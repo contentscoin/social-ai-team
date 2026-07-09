@@ -1,0 +1,60 @@
+// Social AI Team Desktop — Electron main process
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const path = require('path');
+const setup = require('./lib/setup');
+const workspace = require('./lib/workspace');
+const pipeline = require('./lib/pipeline');
+
+let win = null;
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1280,
+    height: 840,
+    minWidth: 960,
+    minHeight: 640,
+    title: 'Social AI Team',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  win.on('closed', () => { win = null; });
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+});
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+
+// ---- Setup wizard ----------------------------------------------------------
+ipcMain.handle('setup:check', () => setup.checkEnvironment());
+ipcMain.handle('setup:installSkills', () => setup.installSkills());
+ipcMain.handle('setup:installCodex', () => setup.installCodexCli((line) => send('log', { source: 'setup', line })));
+ipcMain.handle('setup:codexLogin', () => setup.codexOAuthLogin((line) => send('log', { source: 'setup', line })));
+ipcMain.handle('setup:registerMcp', () => setup.registerCodexMcp((line) => send('log', { source: 'setup', line })));
+
+// ---- Workspace (clients) ---------------------------------------------------
+ipcMain.handle('ws:list', () => workspace.listClients());
+ipcMain.handle('ws:create', (_e, name) => workspace.createClient(name));
+ipcMain.handle('ws:pickFolder', async () => {
+  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+  return r.canceled ? null : workspace.addExisting(r.filePaths[0]);
+});
+ipcMain.handle('ws:status', (_e, dir) => workspace.readStatus(dir));
+ipcMain.handle('ws:outputs', (_e, dir) => workspace.listOutputs(dir));
+ipcMain.handle('ws:readFile', (_e, dir, rel) => workspace.readOutputFile(dir, rel));
+ipcMain.handle('ws:openFolder', (_e, dir) => shell.openPath(dir));
+
+// ---- Pipeline stages -------------------------------------------------------
+ipcMain.handle('pipe:runStage', (_e, dir, stage, opts) =>
+  pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }))
+);
+ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
+ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir));

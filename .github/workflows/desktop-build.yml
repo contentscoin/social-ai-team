@@ -1,0 +1,41 @@
+name: Build desktop installers
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: dist:win
+            artifact: 'desktop/dist/*.exe'
+          - os: macos-latest
+            target: dist:mac
+            artifact: 'desktop/dist/*.dmg'
+          - os: ubuntu-latest
+            target: dist:linux
+            artifact: 'desktop/dist/*.AppImage'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm install
+      - name: Build installer
+        working-directory: desktop
+        run: npm run ${{ matrix.target }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: social-ai-team-${{ matrix.os }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error

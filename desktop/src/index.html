@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'" />
+  <title>Social AI Team</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <h1>☕ Social AI Team</h1>
+
+    <section class="panel" id="setup-panel">
+      <h2>환경 설정</h2>
+      <ul id="setup-checks">
+        <li data-k="claude">Claude Code CLI <span class="badge">…</span></li>
+        <li data-k="codex">Codex CLI <span class="badge">…</span></li>
+        <li data-k="codexAuthed">Codex 로그인 <span class="badge">…</span></li>
+        <li data-k="skillsInstalled">스킬 16종 <span class="badge">…</span></li>
+        <li data-k="agentsInstalled">에이전트 4종 <span class="badge">…</span></li>
+      </ul>
+      <div class="btn-row">
+        <button id="btn-install-skills">스킬 설치/업데이트</button>
+        <button id="btn-install-codex">Codex 설치</button>
+        <button id="btn-codex-login">Codex 로그인 (OAuth)</button>
+        <button id="btn-register-mcp">Codex MCP 등록</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>클라이언트</h2>
+      <ul id="client-list"></ul>
+      <div class="btn-row">
+        <button id="btn-new-client">+ 새 클라이언트</button>
+        <button id="btn-add-folder">폴더 추가</button>
+      </div>
+    </section>
+  </aside>
+
+  <main id="main">
+    <header id="client-header">
+      <h2 id="client-name">클라이언트를 선택하세요</h2>
+      <div class="btn-row">
+        <button id="btn-open-folder" disabled>폴더 열기</button>
+        <button id="btn-terminal" disabled>디렉터와 대화 (터미널)</button>
+      </div>
+    </header>
+
+    <nav id="tabs">
+      <button class="tab active" data-tab="dashboard">대시보드</button>
+      <button class="tab" data-tab="outputs">산출물</button>
+      <button class="tab" data-tab="logs">실행 로그</button>
+    </nav>
+
+    <section id="tab-dashboard" class="tab-body active">
+      <div class="grid">
+        <div class="card">
+          <h3>파운데이션</h3>
+          <ul id="foundation-status">
+            <li data-k="brand">brand-style.md <span class="badge">…</span></li>
+            <li data-k="voiceProfile">kr-voice-profile.md <span class="badge">…</span></li>
+            <li data-k="calendar">content-calendar.md <span class="badge">…</span></li>
+          </ul>
+          <p class="hint">온보딩 인터뷰(브랜드/보이스)는 "디렉터와 대화" 터미널에서 진행하세요.</p>
+        </div>
+        <div class="card">
+          <h3>파이프라인 실행 <span class="hint">— 단계 사이 승인은 여기(앱)가 게이트입니다</span></h3>
+          <div id="stage-buttons" class="btn-col">
+            <button data-stage="calendar">1. 콘텐츠 캘린더 생성</button>
+            <button data-stage="copy">2. 카피 병렬 팬아웃 (승인 후)</button>
+            <button data-stage="shortform">3. 릴스/스토리보드 (승인 후)</button>
+            <button data-stage="visuals">4a. 비주얼 브리프</button>
+            <button data-stage="visuals-generate">4b. 비주얼 생성 (브리프 승인 후)</button>
+            <button data-stage="compliance">5. 컴플라이언스 게이트</button>
+            <button data-stage="review">6. 월말 성과 리뷰</button>
+          </div>
+          <div class="btn-row">
+            <button id="btn-stop" class="danger" disabled>실행 중지</button>
+          </div>
+        </div>
+        <div class="card wide">
+          <h3>워크플로 상태 (context/workflow-status.md)</h3>
+          <ul id="workflow-items"><li class="hint">아직 기록 없음</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-outputs" class="tab-body">
+      <div id="outputs-split">
+        <div id="outputs-list"></div>
+        <div id="outputs-preview"><p class="hint">파일을 선택하세요</p></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="tab-body">
+      <pre id="log-pane"></pre>
+    </section>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
