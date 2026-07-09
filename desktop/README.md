@@ -33,7 +33,7 @@ npm run dist:win      # Windows NSIS (Windows에서, 또는 CI)
 npm run dist:mac      # macOS DMG (macOS에서)
 ```
 
-권장: 태그(`v*`)를 푸시하면 GitHub Actions(`.github/workflows/desktop-build.yml`)가 Windows/macOS/Linux 설치본을 빌드해 아티팩트로 올립니다.
+권장: `desktop/**`가 바뀐 커밋이 `main`에 푸시되면 GitHub Actions(`.github/workflows/desktop-build.yml`)가 Windows/macOS/Linux 설치본을 자동 빌드해 아티팩트로 올립니다 (Actions 탭에서 수동 실행도 가능).
 
 ## 요구사항
 
