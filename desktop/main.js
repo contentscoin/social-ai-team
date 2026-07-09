@@ -6,6 +6,7 @@ const workspace = require('./lib/workspace');
 const pipeline = require('./lib/pipeline');
 const config = require('./lib/config');
 const chat = require('./lib/chat');
+const board = require('./lib/board');
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -83,6 +84,7 @@ ipcMain.handle('ws:status', (_e, dir) => workspace.readStatus(dir));
 ipcMain.handle('ws:outputs', (_e, dir) => workspace.listOutputs(dir));
 ipcMain.handle('ws:readFile', (_e, dir, rel) => workspace.readOutputFile(dir, rel));
 ipcMain.handle('ws:openFolder', (_e, dir) => shell.openPath(dir));
+ipcMain.handle('ws:board', (_e, dir) => board.buildBoard(dir));
 
 // ---- Pipeline stages -------------------------------------------------------
 ipcMain.handle('pipe:runStage', (_e, dir, stage, opts) =>

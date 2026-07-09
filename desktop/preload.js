@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
     outputs: (dir) => ipcRenderer.invoke('ws:outputs', dir),
     readFile: (dir, rel) => ipcRenderer.invoke('ws:readFile', dir, rel),
     openFolder: (dir) => ipcRenderer.invoke('ws:openFolder', dir),
+    board: (dir) => ipcRenderer.invoke('ws:board', dir),
   },
   pipe: {
     runStage: (dir, stage, opts) => ipcRenderer.invoke('pipe:runStage', dir, stage, opts),
