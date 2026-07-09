@@ -177,7 +177,8 @@ For manual publishing, use the Monthly Handoff Summary from /social-media-manage
 
 | MCP | 필수 여부 | 사용처 | 없을 때 (베이스라인 모드) |
 |---|---|---|---|
-| **Nano Banana** | 비주얼 제작 시 **필수** | `creative-designer` (`/social-creative-designer`), 스토리보드 키프레임, 스톱모션 | 이미지 생성 불가 — 텍스트 브리프만 산출 |
+| **Nano Banana** | 비주얼 제작 1순위 | `creative-designer` (`/social-creative-designer`), 스토리보드 키프레임, 스톱모션 — Composite/Brand/Stop-Motion은 이 경로 전용 | 2순위 Codex 렌더 레인으로 폴백 (아래) |
+| **Codex 렌더 레인** (MCP 아님 — CLI) | 선택 (Nano Banana 부재 시 2순위) | `creative-designer` — `sop/creative-designer/scripts/codex_render.sh` (Codex CLI + OpenAI Images API `gpt-image-1`). **Generate 모드·키프레임 전용.** `OPENAI_API_KEY` 환경 secret 또는 `codex login` 필요 | 브리프 온리 (텍스트 프롬프트 스펙만 산출) |
 | **Blotato** | 퍼블리싱 시 **필수** | `/publisher` (`mcp__claude_ai_Blotato__blotato_*`) | 하드스톱 (섹션 4) → 수동 발행 핸드오프 |
 | **Playwright** | 선택 | `/brand-onboarding` (웹사이트·인스타그램 증거 수집) | 운영자 인터뷰로 대체 |
 | **Firecrawl** | 선택 | `/content-calendar`, `/caption-writer`, `/linkedin-writer`, `/x-writer`, `/social-performance-review`, copywriter (경쟁사 리서치) | 리서치 생략, 브랜드 컨텍스트만으로 진행 |
@@ -207,7 +208,7 @@ bash install.sh
 
 **사용자 레벨(`~/.claude/`) 설치가 필수인 이유:** SETUP.md 방식대로 클라이언트마다 별도 작업 폴더를 만들어 그 안에서 스킬을 실행하는데, 클라이언트 폴더는 이 저장소의 `.claude/`를 볼 수 없습니다. 사용자 레벨에 설치해야 어느 폴더에서든 팀이 동작합니다. 클라이언트 폴더(`context/`, `assets/`, `outputs/`)는 SETUP.md 방식 그대로 저장소와 **별도로** 유지합니다.
 
-`sop/creative-designer/image-qa.md`는 클라이언트 폴더의 `sop/` 경로에 두면 기존 `/social-creative-designer` Phase 0의 SOP 훅이 자동으로 읽습니다 — 스킬 수정 없이 동작하는 검증된 훅입니다.
+`sop/creative-designer/` 폴더(image-qa.md, codex-render.md, scripts/codex_render.sh)는 클라이언트 폴더의 `sop/` 경로에 복사해 두면 기존 `/social-creative-designer` Phase 0의 SOP 훅이 자동으로 읽습니다 — 스킬 수정 없이 동작하는 검증된 훅입니다. Codex 렌더 레인을 쓰려면 환경에 `OPENAI_API_KEY` secret을 등록하세요 (Claude Code 웹 환경: 환경 설정 → 환경 변수).
 
 ---
 

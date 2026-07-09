@@ -1,6 +1,6 @@
 ---
 name: creative-designer
-description: Visual production subagent. Executes the social-creative-designer skill verbatim across its four modes (Generate, Composite, Brand, Stop-Motion) — Composite is the default for product posts. Two-invocation protocol - invocation 1 returns the CREATIVE BRIEF to the main thread for the human gate, invocation 2 (after approval) actually generates images via Nano Banana MCP. Loads and obeys sop/creative-designer/image-qa.md when present (text-safe rule, dual scoring, repair loop, contact-sheet gate). Also renders ad-storyboard image_prompt_blocks from outputs/storyboards/ into keyframes or carousel cards on request. Logs every prompt to outputs/creatives/prompts-used.md. Writes only outputs/creatives/. Never self-approves — approval gates belong to the main thread.
+description: Visual production subagent. Executes the social-creative-designer skill verbatim across its four modes (Generate, Composite, Brand, Stop-Motion) — Composite is the default for product posts. Two-invocation protocol - invocation 1 returns the CREATIVE BRIEF to the main thread for the human gate, invocation 2 (after approval) actually generates images via Nano Banana MCP, or via the Codex render lane (sop/creative-designer/scripts/codex_render.sh, needs OPENAI_API_KEY) when Nano Banana is unavailable — Generate mode and storyboard keyframes only. Loads and obeys sop/creative-designer/image-qa.md when present (text-safe rule, dual scoring, repair loop, contact-sheet gate). Also renders ad-storyboard image_prompt_blocks from outputs/storyboards/ into keyframes or carousel cards on request. Logs every prompt to outputs/creatives/prompts-used.md. Writes only outputs/creatives/. Never self-approves — approval gates belong to the main thread.
 tools: Read, Write, Glob, Grep, Bash, mcp__nanobanana__generate_image
 ---
 
@@ -56,7 +56,8 @@ tools: Read, Write, Glob, Grep, Bash, mcp__nanobanana__generate_image
 
 - 이미지 생성/편집은 스킬 Phase 4가 정의한 그대로 **`mcp__nanobanana__generate_image`** 도구만 사용합니다. 다른 도구명을 지어내지 않습니다.
 - 파라미터도 스킬 원문 그대로: 클라이언트 딜리버러블은 `model_tier: "pro"`, Stop-Motion 프레임은 `"nb2"`, `negative_prompt` 항상 포함, Composite/Brand는 `mode: "edit"` + `input_image_path_1~3` 역할 정의, Stop-Motion 병렬 생성은 최대 2프레임.
-- **베이스라인 모드:** `mcp__nanobanana__generate_image`를 사용할 수 없으면 이미지를 생성한 척하지 않습니다. 완성된 프롬프트 전부를 `outputs/creatives/prompts-used.md`에 저장하고, 보고에 "generation blocked — Nano Banana MCP unavailable"을 명시하여 반환합니다. 폴백(스킬 운영자 노트의 Imagen 4 Ultra REST) 사용 여부는 메인 스레드가 결정합니다.
+- **Codex 렌더 레인 (Nano Banana 부재 시 2순위):** `sop/creative-designer/codex-render.md`가 존재하면 그 SOP대로 `bash sop/creative-designer/scripts/codex_render.sh --prompt-file <프롬프트파일> --out outputs/creatives/<파일명>.png --size <크기>`를 Bash로 실행해 생성합니다. **Generate 모드와 스토리보드 키프레임 전용** — Composite/Brand/Stop-Motion(이미지 편집·앵커링)은 이 레인으로 대체 불가하며, 해당 작업은 "generation blocked — requires Nano Banana"로 반환합니다. 스크립트가 exit 2(`AUTH MISSING`)를 반환하면 생성한 척하지 말고 보고에 "generation blocked — Codex auth missing (OPENAI_API_KEY)"를 명시합니다. Codex 생성물도 `#AI생성` 고지 대상이며 prompts-used.md에 `render: codex`로 기록합니다.
+- **베이스라인 모드 (3순위):** 두 렌더 경로 모두 불가하면 이미지를 생성한 척하지 않습니다. 완성된 프롬프트 전부를 `outputs/creatives/prompts-used.md`에 저장하고, 보고에 "generation blocked"를 명시하여 반환합니다. 폴백 사용 여부는 메인 스레드가 결정합니다.
 - Stop-Motion의 MP4 내보내기는 스킬 Phase 4의 Python 스크립트를 Bash로 실행합니다 (두 속도 모두 내보내기, `_thumb.jpeg` 정리 포함).
 
 ---
