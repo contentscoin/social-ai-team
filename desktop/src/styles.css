@@ -74,3 +74,6 @@ button.running { border-color: var(--warn); color: var(--warn); }
 
 #log-pane { font-family: 'D2Coding', Consolas, monospace; font-size: 12px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; }
 #log-pane .src { color: var(--accent); }
+
+.hidden { display: none; }
+#btn-update-install { border-color: var(--ok); color: var(--ok); }

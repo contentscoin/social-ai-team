@@ -193,6 +193,35 @@ function log(source, line) {
 }
 window.api.onLog(({ source, line }) => log(source, line));
 
+// ---- Auto update ------------------------------------------------------------
+async function initUpdatePanel() {
+  const v = await window.api.update.version();
+  $('#update-status').textContent = `현재 v${v} — 확인 전`;
+}
+$('#btn-update-check').onclick = async () => {
+  $('#update-status').textContent = '업데이트 확인 중…';
+  const r = await window.api.update.check();
+  if (!r.ok) $('#update-status').textContent = `확인 불가: ${r.message}`;
+};
+$('#btn-update-install').onclick = () => window.api.update.install();
+window.api.onUpdate(async (u) => {
+  const v = await window.api.update.version();
+  const el = $('#update-status');
+  if (u.state === 'checking') el.textContent = '업데이트 확인 중…';
+  else if (u.state === 'latest') el.textContent = `현재 v${v} — 최신 버전입니다`;
+  else if (u.state === 'available') el.textContent = `v${u.version} 발견 — 다운로드 중…`;
+  else if (u.state === 'downloading') el.textContent = `v 다운로드 중… ${u.percent}%`;
+  else if (u.state === 'ready') {
+    el.textContent = `v${u.version} 준비 완료 — 재시작하면 적용됩니다`;
+    $('#btn-update-install').classList.remove('hidden');
+    log('update', `v${u.version} 다운로드 완료 — "재시작하고 설치"를 누르거나, 앱 종료 시 자동 적용됩니다.`);
+  } else if (u.state === 'error') {
+    el.textContent = `업데이트 오류: ${u.message}`;
+    log('update', `오류: ${u.message}`);
+  }
+});
+
 // ---- boot ------------------------------------------------------------------
 refreshSetup();
 refreshClients();
+initUpdatePanel();

@@ -33,7 +33,14 @@ npm run dist:win      # Windows NSIS (Windows에서, 또는 CI)
 npm run dist:mac      # macOS DMG (macOS에서)
 ```
 
-권장: `desktop/**`가 바뀐 커밋이 `main`에 푸시되면 GitHub Actions(`.github/workflows/desktop-build.yml`)가 Windows/macOS/Linux 설치본을 자동 빌드해 아티팩트로 올립니다 (Actions 탭에서 수동 실행도 가능).
+권장: `desktop/**`가 바뀐 커밋이 `main`에 푸시되면 GitHub Actions(`.github/workflows/desktop-build.yml`)가 Windows/macOS/Linux 설치본을 빌드해 **GitHub Release로 자동 발행**합니다 — [Releases](https://github.com/contentscoin/social-ai-team/releases)가 공식 다운로드 위치입니다 (Actions 아티팩트에도 사본 업로드).
+
+## 자동 업데이트
+
+앱은 `electron-updater`로 GitHub Releases를 업데이트 피드로 사용합니다:
+- 실행 시 자동으로 최신 릴리스를 확인하고 백그라운드에서 다운로드 → 사이드바 "업데이트" 패널에 "재시작하고 설치" 버튼이 나타납니다. 앱 종료 시에도 자동 적용됩니다.
+- 수동 확인: 사이드바 → 업데이트 확인.
+- **macOS 주의**: 코드사이닝 없는 빌드는 macOS가 업데이트 적용을 막습니다(Squirrel 서명 요구) — 업데이트 패널에 오류로 표시되며, 새 dmg를 받아 수동 설치하세요. Apple 개발자 인증서를 CI secret으로 넣으면 자동 업데이트가 활성화됩니다. Windows/Linux는 서명 없이도 동작합니다.
 
 ## 요구사항
 

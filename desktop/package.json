@@ -1,7 +1,7 @@
 {
   "name": "social-ai-team-desktop",
   "productName": "Social AI Team",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Desktop control tower for the Social AI Team — installs the skills, authenticates Codex, and drives the content pipeline per client.",
   "main": "main.js",
   "author": "contentscoin",
@@ -13,6 +13,9 @@
     "dist:mac": "electron-builder --mac --publish never",
     "dist:linux": "electron-builder --linux --publish never"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
@@ -21,6 +24,9 @@
     "appId": "kr.contentscoin.socialaiteam",
     "productName": "Social AI Team",
     "directories": { "output": "dist" },
+    "publish": [
+      { "provider": "github", "owner": "contentscoin", "repo": "social-ai-team", "releaseType": "release" }
+    ],
     "files": ["main.js", "preload.js", "lib/**", "src/**", "assets/**"],
     "extraResources": [
       { "from": "../skills", "to": "payload/skills" },

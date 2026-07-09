@@ -8,6 +8,9 @@ on:
       - '.github/workflows/desktop-build.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write # electron-builder publishes GitHub Releases (auto-update feed)
+
 jobs:
   build:
     strategy:
@@ -15,13 +18,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            target: dist:win
+            flags: --win
             artifact: 'desktop/dist/*.exe'
           - os: macos-latest
-            target: dist:mac
+            flags: --mac
             artifact: 'desktop/dist/*.dmg'
           - os: ubuntu-latest
-            target: dist:linux
+            flags: --linux
             artifact: 'desktop/dist/*.AppImage'
     runs-on: ${{ matrix.os }}
     steps:
@@ -32,10 +35,11 @@ jobs:
       - name: Install dependencies
         working-directory: desktop
         run: npm install
-      - name: Build installer
+      - name: Build installer and publish release (auto-update feed)
         working-directory: desktop
-        run: npm run ${{ matrix.target }}
+        run: npx electron-builder ${{ matrix.flags }} --publish always
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - uses: actions/upload-artifact@v4
         with:

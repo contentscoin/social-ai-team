@@ -24,5 +24,11 @@ contextBridge.exposeInMainWorld('api', {
     stop: () => ipcRenderer.invoke('pipe:stop'),
     openTerminal: (dir) => ipcRenderer.invoke('pipe:openTerminal', dir),
   },
+  update: {
+    version: () => ipcRenderer.invoke('update:version'),
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+  },
   onLog: (cb) => ipcRenderer.on('log', (_e, payload) => cb(payload)),
+  onUpdate: (cb) => ipcRenderer.on('update', (_e, payload) => cb(payload)),
 });
