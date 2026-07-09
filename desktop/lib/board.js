@@ -207,11 +207,20 @@ function buildBoard(dir) {
     ch.files = (lanes[ch.lane] ? lanes[ch.lane].files : []).slice(0, 5);
   }
 
+  const laneFiles = {};
+  for (const [name, l] of Object.entries(lanes)) laneFiles[name] = l.files;
+
   return {
     hasCalendar: !!calMd,
     posts: cards,
     stages: STAGES,
     channels: Object.values(channels).sort((a, b) => b.posts - a.posts),
+    lanes: laneFiles,
+    foundation: {
+      brand: fs.existsSync(path.join(dir, 'context', 'brand-style.md')),
+      voice: fs.existsSync(path.join(dir, 'context', 'kr-voice-profile.md')),
+      calendar: !!calMd,
+    },
     compliance: {
       file: lanes.compliance.files[0] || null,
       pass: cards.filter((c) => c.verdict === 'PASS').length,

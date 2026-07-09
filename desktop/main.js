@@ -4,9 +4,12 @@ const path = require('path');
 const setup = require('./lib/setup');
 const workspace = require('./lib/workspace');
 const pipeline = require('./lib/pipeline');
+const fs = require('fs');
+const os = require('os');
 const config = require('./lib/config');
 const chat = require('./lib/chat');
 const board = require('./lib/board');
+const gates = require('./lib/gates');
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -86,10 +89,74 @@ ipcMain.handle('ws:readFile', (_e, dir, rel) => workspace.readOutputFile(dir, re
 ipcMain.handle('ws:openFolder', (_e, dir) => shell.openPath(dir));
 ipcMain.handle('ws:board', (_e, dir) => board.buildBoard(dir));
 
+// ---- Live board: watch the client folder, push board updates -----------------
+let watchers = [];
+let watchDir = null;
+let watchTimer = null;
+let building = false;
+function pushBoard() {
+  if (!watchDir || building) return;
+  building = true;
+  try { send('board:update', board.buildBoard(watchDir)); } catch { /* transient fs state */ }
+  building = false;
+}
+function onFsEvent() {
+  clearTimeout(watchTimer);
+  watchTimer = setTimeout(pushBoard, 500);
+}
+ipcMain.handle('ws:watch', (_e, dir) => {
+  for (const w of watchers) { try { w.close(); } catch { /* gone */ } }
+  watchers = [];
+  watchDir = dir;
+  if (!dir) return { ok: true, watching: false };
+  const targets = [path.join(dir, 'outputs'), path.join(dir, 'context')];
+  for (const t of targets) {
+    try { fs.mkdirSync(t, { recursive: true }); } catch { /* exists */ }
+    try {
+      watchers.push(fs.watch(t, { recursive: true }, onFsEvent));
+    } catch {
+      // Linux: no recursive watch — watch lane subdirs individually
+      try {
+        watchers.push(fs.watch(t, onFsEvent));
+        for (const sub of fs.readdirSync(t)) {
+          const p = path.join(t, sub);
+          try { if (fs.statSync(p).isDirectory()) watchers.push(fs.watch(p, onFsEvent)); } catch { /* skip */ }
+        }
+      } catch { /* unwatchable */ }
+    }
+  }
+  return { ok: true, watching: watchers.length > 0 };
+});
+
+// ---- Gates (approval stamps) ---------------------------------------------------
+ipcMain.handle('gates:get', (_e, dir) => gates.computeGates(board.buildBoard(dir), gates.load(dir)));
+ipcMain.handle('gates:approve', (_e, dir, entry) => {
+  gates.approve(dir, entry);
+  return gates.computeGates(board.buildBoard(dir), gates.load(dir));
+});
+
+// ---- Channel connection check (Blotato MCP presence) ----------------------------
+let channelCache = { at: 0, data: null };
+ipcMain.handle('channels:check', () => {
+  if (channelCache.data && Date.now() - channelCache.at < 10 * 60 * 1000) return channelCache.data;
+  let blotato = false;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
+    blotato = Object.keys(cfg.mcpServers || {}).some((k) => /blotato/i.test(k));
+  } catch { /* no config */ }
+  channelCache = { at: Date.now(), data: { blotato } };
+  return channelCache.data;
+});
+
 // ---- Pipeline stages -------------------------------------------------------
-ipcMain.handle('pipe:runStage', (_e, dir, stage, opts) =>
-  pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }))
-);
+ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
+  const startedAt = Date.now();
+  send('stage', { state: 'start', stage, startedAt });
+  const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }));
+  send('stage', { state: 'end', stage, ok: r.ok, startedAt });
+  setTimeout(pushBoard, 300); // stages write files — refresh the board promptly
+  return { ...r, startedAt };
+});
 ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
 ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir, config.getEngine()));
 

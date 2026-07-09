@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('api', {
     readFile: (dir, rel) => ipcRenderer.invoke('ws:readFile', dir, rel),
     openFolder: (dir) => ipcRenderer.invoke('ws:openFolder', dir),
     board: (dir) => ipcRenderer.invoke('ws:board', dir),
+    watch: (dir) => ipcRenderer.invoke('ws:watch', dir),
+  },
+  gates: {
+    get: (dir) => ipcRenderer.invoke('gates:get', dir),
+    approve: (dir, entry) => ipcRenderer.invoke('gates:approve', dir, entry),
+  },
+  channels: {
+    check: () => ipcRenderer.invoke('channels:check'),
   },
   pipe: {
     runStage: (dir, stage, opts) => ipcRenderer.invoke('pipe:runStage', dir, stage, opts),
@@ -40,4 +48,6 @@ contextBridge.exposeInMainWorld('api', {
   },
   onLog: (cb) => ipcRenderer.on('log', (_e, payload) => cb(payload)),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, payload) => cb(payload)),
+  onBoard: (cb) => ipcRenderer.on('board:update', (_e, payload) => cb(payload)),
+  onStage: (cb) => ipcRenderer.on('stage', (_e, payload) => cb(payload)),
 });
