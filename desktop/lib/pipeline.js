@@ -71,10 +71,30 @@ function runStage(dir, stage, opts = {}, onLine) {
     '--permission-mode', 'acceptEdits',
     '--add-dir', dir,
   ];
-  return runCmd('claude', args, onLine, {
+  const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
+  const runOnce = (env) => runCmd('claude', args, onLine, {
     cwd: dir,
+    env,
     onSpawn: (child) => { current = child; },
   }).then((r) => { current = null; return r; });
+
+  return runOnce().then(async (r) => {
+    if (!r.ok && AUTH_FAIL.test(r.out)) {
+      if (process.env.ANTHROPIC_API_KEY) {
+        // 흔한 원인: PC에 남은 무효한 ANTHROPIC_API_KEY가 구독 로그인을 가로챔 → 키 없이 1회 재시도
+        onLine && onLine('[auth] ANTHROPIC_API_KEY 환경변수로 401 발생 — 키 없이 구독 로그인으로 재시도합니다.');
+        const retry = await runOnce({ ANTHROPIC_API_KEY: undefined });
+        if (retry.ok) {
+          onLine && onLine('[auth] 재시도 성공. PC의 ANTHROPIC_API_KEY 환경변수가 무효한 값입니다 — 시스템 환경변수에서 제거를 권합니다.');
+          return retry;
+        }
+        r = retry;
+      }
+      onLine && onLine('[auth] claude CLI 인증 실패 — "디렉터와 대화 (터미널)" 버튼으로 터미널을 열어 claude에 로그인(/login)한 뒤 다시 실행하세요.');
+      return { ...r, tail: 'claude CLI 인증 실패 (401). 터미널에서 claude /login 후 재시도. ANTHROPIC_API_KEY 환경변수가 있다면 유효한지 확인/제거하세요.' };
+    }
+    return r;
+  });
 }
 
 function stopCurrent() {
@@ -92,7 +112,13 @@ function openInteractiveTerminal(dir, cmdOverride) {
   const cmd = cmdOverride || 'claude "/content-director"';
   const env = envWithPath();
   if (isWin) {
-    spawn('cmd', ['/c', 'start', '"Social AI Team"', 'cmd', '/k', `cd /d "${dir}" && ${cmd}`], { detached: true, shell: false, env });
+    // `start`의 인용 규칙이 spawn 인자 이스케이프와 충돌하므로 임시 .cmd 스크립트를 경유한다.
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const script = path.join(os.tmpdir(), `sat-terminal-${Date.now()}.cmd`);
+    fs.writeFileSync(script, `@echo off\r\ncd /d "${dir}"\r\n${cmd}\r\n`);
+    spawn('cmd', ['/c', 'start', '', 'cmd', '/k', script], { detached: true, shell: false, env });
   } else if (isMac) {
     const script = `tell application "Terminal" to do script "cd ${JSON.stringify(dir)} && ${cmd}"`;
     spawn('osascript', ['-e', script], { detached: true, env });

@@ -27,6 +27,8 @@ function envWithPath(extra = {}) {
   const PATH = [...extraDirs(), process.env.PATH || process.env.Path || ''].join(sep);
   const env = { ...process.env, PATH, ...extra };
   if (isWin) env.Path = PATH;
+  // extra values of undefined mean "remove this var" (e.g. drop a stale API key)
+  for (const [k, v] of Object.entries(extra)) if (v === undefined) delete env[k];
   return env;
 }
 
@@ -64,6 +66,7 @@ function runCmd(name, args, onLine, opts = {}) {
         windowsHide: true,
         env: envWithPath(opts.env || {}),
         cwd: opts.cwd,
+        stdio: ['ignore', 'pipe', 'pipe'], // no stdin — headless CLIs must not wait on it
       });
     } catch (e) {
       resolve({ ok: false, code: -1, out: e.message, tail: e.message, cmd });
