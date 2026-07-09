@@ -7,8 +7,25 @@ Nano Banana MCP가 없거나 운영자가 지시한 경우, 이미지 생성을 
 | 순위 | 경로 | 조건 |
 |---|---|---|
 | 1 | Nano Banana MCP (`mcp__nanobanana__generate_image`) | MCP 연결됨 — 기존 스킬 기본 경로 (Composite/Brand 모드 등 이미지 편집 필요 작업은 이 경로만 가능) |
-| 2 | **Codex 렌더** (`sop/creative-designer/scripts/codex_render.sh`) | Nano Banana 부재 + Codex 인증 가능. **Generate 모드(신규 생성)와 스토리보드 키프레임 전용** |
-| 3 | 브리프 온리 (베이스라인) | 둘 다 불가 — 프롬프트 스펙만 텍스트로 산출 |
+| 2a | **Codex MCP 위임 — pumasi 방식** (`mcp__codex__codex`) | codex가 MCP 서버로 등록돼 있고 (아래 등록 방법) codex 인증 완료. 조립된 프롬프트 + 출력 경로 규칙을 codex 서브에이전트에 위임하고 결과 파일 경로만 회수 (사용자 video-production 리포의 pumasi/image-generator 패턴) |
+| 2b | **Codex 렌더 스크립트** (`sop/creative-designer/scripts/codex_render.sh`) | MCP 위임 불가 시 동일 백엔드의 스크립트 경로. **Generate 모드(신규 생성)와 스토리보드 키프레임 전용** (2a도 동일 제약) |
+| 3 | 브리프 온리 (베이스라인) | 전부 불가 — 프롬프트 스펙만 텍스트로 산출 |
+
+**pumasi 방식 위임 계약 (2a):** 호출당 하나의 명확한 태스크만 전달합니다 — ① 최종 프롬프트 전문(재작성 금지 명시), ② 정확한 출력 파일 경로, ③ 크기/비율, ④ "파일 생성 후 경로만 보고" 지시. codex가 프롬프트를 손대지 않게 하는 것이 pumasi 원칙입니다 (프롬프트 작성 책임은 이쪽, 실행 책임은 codex).
+
+## codex MCP 서버 등록 (2a 경로 — 운영자가 직접 추가)
+
+MCP 서버 등록은 실행 권한을 넓히는 설정이므로 **운영자가 직접** 추가합니다. 프로젝트 루트의 `.mcp.json`에:
+
+```json
+{
+  "mcpServers": {
+    "codex": { "command": "codex", "args": ["mcp-server"] }
+  }
+}
+```
+
+또는 `claude mcp add codex -- codex mcp-server`. 등록하면 `mcp__codex__codex` 도구가 생기고, pumasi 방식 위임이 활성화됩니다.
 
 ## 인증 요구사항
 
