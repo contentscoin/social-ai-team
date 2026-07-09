@@ -18,10 +18,10 @@ let win = null;
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1280,
-    height: 840,
-    minWidth: 960,
-    minHeight: 640,
+    width: 1380,
+    height: 860,
+    minWidth: 1180,
+    minHeight: 680,
     title: 'Social AI Team',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -72,7 +72,11 @@ ipcMain.handle('setup:check', () => setup.checkEnvironment());
 ipcMain.handle('setup:installSkills', () => setup.installSkills());
 ipcMain.handle('setup:installCodex', () => setup.installCodexCli((line) => send('log', { source: 'setup', line })));
 ipcMain.handle('setup:codexLogin', () => setup.codexOAuthLogin((line) => send('log', { source: 'setup', line })));
-ipcMain.handle('setup:registerMcp', () => setup.registerCodexMcp((line) => send('log', { source: 'setup', line })));
+ipcMain.handle('setup:registerMcp', async () => {
+  const r = await setup.registerCodexMcp((line) => send('log', { source: 'setup', line }));
+  channelCache = { at: 0, data: null }; // ~/.claude.json changed — re-detect channel connections
+  return r;
+});
 ipcMain.handle('setup:installIma2', () => setup.installIma2((line) => send('log', { source: 'setup', line })));
 ipcMain.handle('setup:ima2Setup', () => pipeline.openInteractiveTerminal(app.getPath('home'), 'ima2 setup'));
 
@@ -87,52 +91,77 @@ ipcMain.handle('ws:status', (_e, dir) => workspace.readStatus(dir));
 ipcMain.handle('ws:outputs', (_e, dir) => workspace.listOutputs(dir));
 ipcMain.handle('ws:readFile', (_e, dir, rel) => workspace.readOutputFile(dir, rel));
 ipcMain.handle('ws:openFolder', (_e, dir) => shell.openPath(dir));
-ipcMain.handle('ws:board', (_e, dir) => board.buildBoard(dir));
+ipcMain.handle('ws:board', (_e, dir) => {
+  try { return board.buildBoard(dir); }
+  catch (e) { return { hasCalendar: false, posts: [], stages: board.STAGES, channels: [], lanes: {}, foundation: {}, compliance: { pass: 0, warn: 0, block: 0 }, error: String(e && e.message || e) }; }
+});
 
 // ---- Live board: watch the client folder, push board updates -----------------
 let watchers = [];
+let watchedPaths = new Set();
 let watchDir = null;
 let watchTimer = null;
 let building = false;
 function pushBoard() {
   if (!watchDir || building) return;
   building = true;
-  try { send('board:update', board.buildBoard(watchDir)); } catch { /* transient fs state */ }
+  try { send('board:update', { dir: watchDir, board: board.buildBoard(watchDir) }); } catch { /* transient fs state */ }
   building = false;
+}
+function addWatch(p, handler) {
+  if (watchedPaths.has(p)) return;
+  try {
+    const w = fs.watch(p, handler);
+    w.on('error', () => { try { w.close(); } catch { /* gone */ } watchedPaths.delete(p); });
+    watchers.push(w);
+    watchedPaths.add(p);
+  } catch { /* unwatchable */ }
+}
+function rescanSubdirs(parent) {
+  try {
+    for (const sub of fs.readdirSync(parent)) {
+      const p = path.join(parent, sub);
+      try { if (fs.statSync(p).isDirectory()) addWatch(p, onFsEvent); } catch { /* skip */ }
+    }
+  } catch { /* gone */ }
 }
 function onFsEvent() {
   clearTimeout(watchTimer);
   watchTimer = setTimeout(pushBoard, 500);
 }
 ipcMain.handle('ws:watch', (_e, dir) => {
+  clearTimeout(watchTimer);
   for (const w of watchers) { try { w.close(); } catch { /* gone */ } }
-  watchers = [];
+  watchers = []; watchedPaths = new Set();
   watchDir = dir;
   if (!dir) return { ok: true, watching: false };
   const targets = [path.join(dir, 'outputs'), path.join(dir, 'context')];
   for (const t of targets) {
     try { fs.mkdirSync(t, { recursive: true }); } catch { /* exists */ }
     try {
-      watchers.push(fs.watch(t, { recursive: true }, onFsEvent));
+      const w = fs.watch(t, { recursive: true }, onFsEvent);
+      w.on('error', () => { try { w.close(); } catch { /* gone */ } });
+      watchers.push(w);
     } catch {
-      // Linux: no recursive watch — watch lane subdirs individually
-      try {
-        watchers.push(fs.watch(t, onFsEvent));
-        for (const sub of fs.readdirSync(t)) {
-          const p = path.join(t, sub);
-          try { if (fs.statSync(p).isDirectory()) watchers.push(fs.watch(p, onFsEvent)); } catch { /* skip */ }
-        }
-      } catch { /* unwatchable */ }
+      // Linux: no recursive watch — watch parent + subdirs, rescan for lanes created later
+      addWatch(t, () => { rescanSubdirs(t); onFsEvent(); });
+      rescanSubdirs(t);
     }
   }
   return { ok: true, watching: watchers.length > 0 };
 });
 
 // ---- Gates (approval stamps) ---------------------------------------------------
-ipcMain.handle('gates:get', (_e, dir) => gates.computeGates(board.buildBoard(dir), gates.load(dir)));
+ipcMain.handle('gates:get', (_e, dir) => {
+  try { return gates.computeGates(board.buildBoard(dir), gates.load(dir)); }
+  catch (e) { return { nodes: [], current: 0, approvals: [], error: String(e && e.message || e) }; }
+});
 ipcMain.handle('gates:approve', (_e, dir, entry) => {
-  gates.approve(dir, entry);
-  return gates.computeGates(board.buildBoard(dir), gates.load(dir));
+  try {
+    const b = board.buildBoard(dir);
+    gates.approve(dir, { ...entry, calendarHash: b.calendarHash });
+    return gates.computeGates(b, gates.load(dir));
+  } catch (e) { return { nodes: [], current: 0, approvals: [], error: String(e && e.message || e) }; }
 });
 
 // ---- Channel connection check (Blotato MCP presence) ----------------------------
@@ -152,10 +181,15 @@ ipcMain.handle('channels:check', () => {
 ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
   const startedAt = Date.now();
   send('stage', { state: 'start', stage, startedAt });
-  const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }));
-  send('stage', { state: 'end', stage, ok: r.ok, startedAt });
-  setTimeout(pushBoard, 300); // stages write files — refresh the board promptly
-  return { ...r, startedAt };
+  try {
+    const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }));
+    return { ...r, startedAt };
+  } catch (e) {
+    return { ok: false, out: String(e && e.message || e), tail: String(e && e.message || e), startedAt };
+  } finally {
+    send('stage', { state: 'end', stage, startedAt });
+    setTimeout(pushBoard, 300); // stages write files — refresh the board promptly
+  }
 });
 ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
 ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir, config.getEngine()));

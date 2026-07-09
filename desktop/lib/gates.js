@@ -27,11 +27,16 @@ function approve(dir, entry) {
   fs.writeFileSync(gatesPath(dir), JSON.stringify(g, null, 2));
   return g;
 }
-function approvedSet(g) { return new Set((g.approvals || []).map((a) => a.node)); }
+// stamps from a different calendar version are stale — a regenerated month must be re-approved
+function approvedSet(g, calendarHash) {
+  return new Set((g.approvals || [])
+    .filter((a) => !a.calendarHash || !calendarHash || a.calendarHash === calendarHash)
+    .map((a) => a.node));
+}
 
 // evidence per node from board data; approval unlocks regardless (conservative on ambiguity)
 function computeGates(board, gatesData) {
-  const ok = approvedSet(gatesData);
+  const ok = approvedSet(gatesData, board.calendarHash);
   const posts = board.posts || [];
   const at = (s) => posts.filter((p) => ['planned', 'copy', 'visual', 'review', 'ready'].indexOf(p.stage) >= ['planned', 'copy', 'visual', 'review', 'ready'].indexOf(s)).length;
   const evidence = {

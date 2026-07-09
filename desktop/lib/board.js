@@ -3,8 +3,11 @@
 // Stages: planned → copy → visual → review → ready   (cards move themselves; no manual drag)
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const STAGES = ['planned', 'copy', 'visual', 'review', 'ready'];
+// text-read caches keyed on path|mtime|size — buildBoard runs on every watch event
+const textCache = new Map();
 
 // ---- helpers -----------------------------------------------------------------
 function read(p, cap = 512 * 1024) {
@@ -13,6 +16,14 @@ function read(p, cap = 512 * 1024) {
     if (!stat.isFile() || stat.size > cap) return '';
     return fs.readFileSync(p, 'utf8');
   } catch { return ''; }
+}
+function cachedRead(fp, st) {
+  const key = fp + '|' + st.mtimeMs + '|' + st.size;
+  if (textCache.has(key)) return textCache.get(key);
+  const t = read(fp);
+  if (textCache.size > 400) textCache.clear();
+  textCache.set(key, t);
+  return t;
 }
 function readLane(dir, lane) {
   const p = path.join(dir, 'outputs', lane);
@@ -23,11 +34,18 @@ function readLane(dir, lane) {
       const fp = path.join(p, f);
       const st = fs.statSync(fp);
       if (!st.isFile()) continue;
-      files.push({ name: f, rel: path.join('outputs', lane, f), mtime: st.mtimeMs, size: st.size });
-      if (/\.(md|txt|json|srt)$/i.test(f)) text += '\n' + read(fp);
+      files.push({ name: f, rel: path.join('outputs', lane, f), mtime: st.mtimeMs, size: st.size, _fp: fp });
     }
   } catch { /* lane absent */ }
   files.sort((a, b) => b.mtime - a.mtime);
+  // aggregate cap: newest 40 text files / 2MB per lane — watch events must stay cheap
+  let budget = 2 * 1024 * 1024, count = 0;
+  for (const f of files) {
+    if (!/\.(md|txt|json|srt)$/i.test(f.name)) continue;
+    if (++count > 40 || (budget -= f.size) < 0) break;
+    text += '\n' + cachedRead(f._fp, { mtimeMs: f.mtime, size: f.size });
+  }
+  for (const f of files) delete f._fp;
   return { text, files };
 }
 // normalize for fuzzy topic matching (Korean + English, drop spaces/punctuation)
@@ -182,10 +200,12 @@ function buildBoard(dir) {
     let stage = 'planned';
     if (copyDone) stage = 'copy';
     if (copyDone && visualDone) stage = 'visual';
-    if (verdict === 'WARN' || verdict === 'BLOCK') stage = 'review';
-    if (verdict === 'PASS') stage = 'ready';
+    // verdicts only promote posts that actually have copy evidence — a stale
+    // compliance file must not mark an unwritten post publish-ready
+    if (copyDone && (verdict === 'WARN' || verdict === 'BLOCK')) stage = 'review';
+    if (copyDone && verdict === 'PASS') stage = 'ready';
 
-    return { ...post, lane, isReel, stage, verdict, channel: channelKey(post.platform) };
+    return { ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform) };
   });
 
   // channel aggregates
@@ -212,6 +232,7 @@ function buildBoard(dir) {
 
   return {
     hasCalendar: !!calMd,
+    calendarHash: calMd ? crypto.createHash('sha1').update(calMd).digest('hex').slice(0, 12) : null,
     posts: cards,
     stages: STAGES,
     channels: Object.values(channels).sort((a, b) => b.posts - a.posts),

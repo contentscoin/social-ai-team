@@ -47,7 +47,11 @@ document.addEventListener('click', (e) => { if (popTarget && !$('#popover').cont
 
 // ---- overlay stack -----------------------------------------------------------------
 function openSheet(id) { $('#overlay').classList.remove('hidden'); $$('#overlay > .sheet, #overlay > .fullscreen').forEach((s) => s.classList.add('hidden')); $(id).classList.remove('hidden'); }
-function closeOverlay() { $('#overlay').classList.add('hidden'); $$('#overlay > *').forEach((s) => s.classList.add('hidden')); }
+function closeOverlay() {
+  if (typeof currentStampReset === 'function') currentStampReset(); // ESC 중 도장 진행 취소
+  S.approveNode = null;
+  $('#overlay').classList.add('hidden'); $$('#overlay > *').forEach((s) => s.classList.add('hidden'));
+}
 $('#overlay').addEventListener('click', (e) => { if (e.target === $('#overlay')) closeOverlay(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hidePopover(); closeOverlay(); } });
 
@@ -60,7 +64,11 @@ async function refreshClients() {
     a.className = 'avatar' + (S.client && S.client.dir === c.dir ? ' active' : '');
     a.textContent = c.name.slice(0, 2).toUpperCase();
     a.title = c.name;
-    a.onclick = () => { if (S.running) { toast('실행 중에는 클라이언트를 전환할 수 없습니다'); return; } selectClient(c); };
+    a.onclick = () => {
+      if (S.running) { toast('실행 중에는 클라이언트를 전환할 수 없습니다'); return; }
+      if (S.chatBusy) { toast('디렉터 응답을 기다리는 중에는 전환할 수 없습니다'); return; }
+      selectClient(c);
+    };
     box.appendChild(a);
   }
 }
@@ -72,12 +80,22 @@ $('#rail-add').onclick = (e) => {
   </div>`)) bindAddPop();
 };
 function bindAddPop() {
-  $('#pop-new').onclick = async () => {
-    hidePopover();
-    const name = prompt('클라이언트 이름 (영문/한글):');
-    if (!name) return;
-    const r = await window.api.ws.create(name);
-    if (r.ok) { await refreshClients(); selectClient(r); }
+  // Electron 렌더러에는 window.prompt가 없다 — 팝오버 인라인 입력 사용
+  $('#pop-new').onclick = () => {
+    $('#popover').innerHTML = `<b>새 클라이언트</b>
+      <input id="pop-name" placeholder="이름 (영문/한글)" style="width:100%;margin-top:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:12.5px">
+      <button id="pop-create" style="margin-top:8px;width:100%">만들기</button>`;
+    const go = async () => {
+      const name = $('#pop-name').value.trim();
+      if (!name) return;
+      hidePopover();
+      const r = await window.api.ws.create(name);
+      if (r.ok) { await refreshClients(); selectClient(r); }
+      else toast('생성 실패: ' + (r.error || '이름을 확인하세요'));
+    };
+    $('#pop-create').onclick = go;
+    $('#pop-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    $('#pop-name').focus();
   };
   $('#pop-pick').onclick = async () => {
     hidePopover();
@@ -104,8 +122,7 @@ async function selectClient(c) {
 for (const b of $$('#view-seg button')) b.onclick = () => {
   S.view = b.dataset.view;
   $$('#view-seg button').forEach((x) => x.classList.toggle('active', x === b));
-  $('#timeline').classList.toggle('hidden', S.view !== 'timeline');
-  $('#kanban').classList.toggle('hidden', S.view !== 'kanban');
+  renderHero(); // 뷰 표시/숨김의 단일 진실 공급원 (히어로 상태 존중)
 };
 for (const b of $$('#engine-seg button')) b.onclick = async () => {
   if (S.running) { toast('실행 중에는 엔진을 바꿀 수 없습니다'); return; }
@@ -125,7 +142,12 @@ function setRunning(stage) {
   if (stage) {
     S.runStart = Date.now();
     clearInterval(S.runTimer);
-    S.runTimer = setInterval(() => { $('#tb-running-label').textContent = `${stage} 실행 중 · ${fmtDur(Date.now() - S.runStart)}`; }, 1000);
+    S.runTimer = setInterval(() => {
+      const d = fmtDur(Date.now() - S.runStart);
+      $('#tb-running-label').textContent = `${stage} 실행 중 · ${d}`;
+      const ctaLabel = $('#gate-cta span');
+      if (S.running && ctaLabel) ctaLabel.textContent = `중지 · ${d}`;
+    }, 1000);
     $('#tb-running-label').textContent = `${stage} 실행 중`;
   } else clearInterval(S.runTimer);
   renderGateBar();
@@ -272,7 +294,8 @@ function makeCard(p) {
 function renderBoardViews(flip, moved) {
   const b = S.board; if (!b) return;
   const rects = new Map();
-  if (flip) for (const el of $$('.post-card')) rects.set(el.dataset.key, el.getBoundingClientRect());
+  const flipRoot = S.view === 'kanban' ? '#kanban ' : '#timeline ';
+  if (flip) for (const el of $$(flipRoot + '.post-card')) rects.set(el.dataset.key, el.getBoundingClientRect());
   // 타임라인
   const tl = $('#timeline'); tl.innerHTML = '';
   const weeks = {};
@@ -283,7 +306,7 @@ function renderBoardViews(flip, moved) {
     const done = posts.filter((p) => p.stage === 'ready').length;
     const sec = document.createElement('section');
     sec.className = 'week-section';
-    sec.innerHTML = `<div class="week-head">${w}주차 <span class="muted">${posts.length}개</span><span class="week-bar"><span style="width:${(done / posts.length) * 100}%"></span></span></div>`;
+    sec.innerHTML = `<div class="week-head">${esc(w)}주차 <span class="muted">${posts.length}개</span><span class="week-bar"><span style="width:${(done / posts.length) * 100}%"></span></span></div>`;
     const grid = document.createElement('div'); grid.className = 'tl-grid';
     for (const p of posts) grid.appendChild(makeCard(p));
     sec.appendChild(grid); tl.appendChild(sec);
@@ -312,13 +335,14 @@ function renderBoardViews(flip, moved) {
       toast('카드 상태는 파일 증거로 자동 계산됩니다 — 디렉터에게 작업을 지시하세요');
     });
   }
-  // FLIP
+  // FLIP — 보이는 뷰만 (타임라인/칸반이 같은 data-key를 공유하므로 스코프 필수)
   if (flip && rects.size) {
+    const root = S.view === 'kanban' ? '#kanban ' : '#timeline ';
     requestAnimationFrame(() => {
       let i = 0;
-      for (const el of $$('.post-card')) {
+      for (const el of $$(root + '.post-card')) {
         const old = rects.get(el.dataset.key);
-        if (!old) continue;
+        if (!old || (!old.width && !old.height)) continue; // hidden-view zero rects
         const now = el.getBoundingClientRect();
         const dx = old.left - now.left, dy = old.top - now.top;
         if (!dx && !dy) continue;
@@ -400,7 +424,18 @@ function renderCTA() {
   const needsStamp = ['calendar', 'copy', 'compliance'].includes(n.key);
   if (n.key === 'foundation') { label.textContent = '온보딩 인터뷰 시작'; cta.onclick = () => prefillChat('브랜드 온보딩 인터뷰를 시작해줘. 질문을 하나씩 해줘.'); }
   else if (n.done && needsStamp && !n.approved) { cta.classList.add('approve'); icon.setAttribute('href', '#i-stamp'); label.textContent = `${n.label} 검토 → 승인`; cta.onclick = () => openApproveSheet(n); }
-  else if (n.key === 'publish') { label.textContent = '월말 성과 리뷰 실행'; cta.onclick = () => runStage('review'); }
+  else if (n.key === 'publish') {
+    label.textContent = '발행 · 월말 리뷰';
+    cta.onclick = (e) => {
+      if (popover(e.currentTarget, `<b>발행 단계</b><p class="muted" style="margin:6px 0">Blotato 연결 시 자동 예약, 네이버는 수동 발행입니다.</p>
+        <div style="display:flex;flex-direction:column;gap:6px">
+        <button id="pop-pub">Blotato 발행 지시 (디렉터)</button>
+        <button id="pop-review">월말 성과 리뷰 실행</button></div>`)) {
+        $('#pop-pub').onclick = () => { hidePopover(); prefillChat('컴플라이언스를 통과한 콘텐츠를 /publisher로 Blotato에 스케줄해줘. 네이버 건은 수동 발행 체크리스트로 정리해줘.'); };
+        $('#pop-review').onclick = () => { hidePopover(); runStage('review'); };
+      }
+    };
+  }
   else if (n.stage) { label.textContent = `${n.label} 실행`; cta.onclick = (e) => confirmRun(e.currentTarget, n.stage, n.label); }
   else { cta.disabled = true; label.textContent = n.label; }
 }
@@ -412,14 +447,20 @@ function confirmRun(anchor, stage, name) {
 }
 async function runStage(stage, extra) {
   if (S.running) { toast('다른 단계가 실행 중입니다'); return; }
+  if (S.chatBusy) { toast('디렉터 응답을 기다리는 중입니다 — 잠시 후 실행하세요'); return; }
   setRunning(stage);
   switchDock('log');
   logLine(stage, `▶ 실행 시작 — ${S.client.name}`);
-  const r = await window.api.pipe.runStage(S.client.dir, stage, extra ? { extraContext: extra } : {});
-  S.lastRunStart[stage] = r.startedAt || Date.now() - 60000;
-  setRunning(null);
-  logLine(stage, r.ok ? '✔ 완료' : `✖ 종료 코드 ${r.code}`);
-  if (!r.ok && r.tail) toast(r.tail.slice(0, 120));
+  try {
+    const r = await window.api.pipe.runStage(S.client.dir, stage, extra ? { extraContext: extra } : {});
+    S.lastRunStart[stage] = r.startedAt || Date.now() - 60000;
+    logLine(stage, r.ok ? '✔ 완료' : `✖ 종료 코드 ${r.code}`);
+    if (!r.ok && r.tail) toast(r.tail.slice(0, 120));
+  } catch (e) {
+    logLine(stage, '✖ 오류: ' + e.message);
+  } finally {
+    if (S.running === stage) setRunning(null);
+  }
   await refreshBoard(false);
 }
 $('#gate-checklist').onclick = async (e) => {
@@ -429,13 +470,28 @@ $('#gate-checklist').onclick = async (e) => {
 };
 
 // ---- approval sheet + 도장 ------------------------------------------------------------------
+function reopenApproveSheet(node) {
+  const checked = new Set($$('.warn-sign').filter((c) => c.checked).map((c) => c.dataset.n));
+  openApproveSheet(node);
+  for (const c of $$('.warn-sign')) if (checked.has(c.dataset.n)) c.checked = true;
+}
 function openApproveSheet(node) {
   const sheet = $('#sheet-approve');
   const isCompliance = node.key === 'compliance';
-  const since = S.lastRunStart[node.stage] || Date.now() - 24 * 3600e3;
-  const files = [];
-  for (const [lane, fl] of Object.entries(S.board.lanes || {})) for (const f of fl) if (f.mtime >= since) files.push({ ...f, lane });
-  files.sort((a, b) => b.mtime - a.mtime);
+  S.approveNode = node.key;
+  let files = [];
+  if (node.key === 'calendar') {
+    files = [{ name: 'content-calendar.md', rel: 'context/content-calendar.md', mtime: Date.now(), lane: 'context' }];
+  } else {
+    const since = S.lastRunStart[node.stage] || Date.now() - 24 * 3600e3;
+    for (const [lane, fl] of Object.entries(S.board.lanes || {})) for (const f of fl) if (f.mtime >= since) files.push({ ...f, lane });
+    files.sort((a, b) => b.mtime - a.mtime);
+    if (!files.length) { // 컷오프에 걸리는 파일이 없으면 최근 산출물로 폴백 — 빈 시트에 도장 찍게 하지 않는다
+      for (const [lane, fl] of Object.entries(S.board.lanes || {})) for (const f of fl) files.push({ ...f, lane });
+      files.sort((a, b) => b.mtime - a.mtime);
+      files = files.slice(0, 12);
+    }
+  }
   const warnPosts = S.board.posts.filter((p) => p.verdict === 'WARN');
   const blockPosts = S.board.posts.filter((p) => p.verdict === 'BLOCK');
 
@@ -466,6 +522,7 @@ function openApproveSheet(node) {
     const row = $('#tpl-file-row').content.firstElementChild.cloneNode(true);
     $('.fr-name', row).textContent = f.name;
     $('.fr-time', row).textContent = relTime(f.mtime);
+    row.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-file', f.rel));
     row.onclick = async () => {
       const r = await window.api.ws.readFile(S.client.dir, f.rel);
       preview.innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}">` : `<pre>${esc(r.text)}</pre>`) : `<p class="muted">${esc(r.error)}</p>`;
@@ -479,18 +536,22 @@ function openApproveSheet(node) {
     const p = S.board.posts.find((x) => x.n === Number(b.dataset.rework));
     closeOverlay(); prefillChat(`「${cardId(p)} · ${p.topic}」가 BLOCK 판정이야. 컴플라이언스 사유를 확인하고 재작업해줘.`);
   };
-  bindStamp($('#stamp', sheet), node, isCompliance, blockPosts.length, warnPosts.length);
+  bindStamp($('#stamp', sheet), node, isCompliance);
   openSheet('#sheet-approve');
 }
-function bindStamp(btn, node, isCompliance, blocks, warns) {
+function bindStamp(btn, node, isCompliance) {
   const canStamp = () => {
+    // 시트가 열린 뒤 보드가 갱신될 수 있으므로 판정 수는 항상 라이브로 계산
+    const blocks = S.board.posts.filter((p) => p.verdict === 'BLOCK').length;
     if (isCompliance && blocks > 0) return 'BLOCK 카드가 있어 승인할 수 없습니다 — 재작업이 먼저입니다';
-    if (isCompliance && warns > 0 && $$('.warn-sign').some((c) => !c.checked)) return 'WARN 항목에 모두 서명해야 승인할 수 있습니다';
+    if (isCompliance && $$('.warn-sign').some((c) => !c.checked)) return 'WARN 항목에 모두 서명해야 승인할 수 있습니다';
     return null;
   };
   let timer = null, p = 0;
-  const reset = () => { clearInterval(timer); p = 0; btn.style.setProperty('--p', 0); };
+  const reset = () => { clearInterval(timer); timer = null; p = 0; btn.style.setProperty('--p', 0); };
+  currentStampReset = reset;
   btn.addEventListener('pointerdown', () => {
+    if (timer) return; // 멀티터치/펜 중복 진입 차단
     const why = canStamp();
     if (why) { toast(why); return; }
     timer = setInterval(async () => {
@@ -515,10 +576,13 @@ function bindStamp(btn, node, isCompliance, blocks, warns) {
   });
   btn.addEventListener('pointerup', reset);
   btn.addEventListener('pointerleave', reset);
+  btn.addEventListener('pointercancel', reset);
 }
+let currentStampReset = null;
 
 // ---- dock: chat / log / inspector ---------------------------------------------------------
 function switchDock(name) {
+  S.inspectorN = null;
   $$('#dock-seg button').forEach((b) => b.classList.toggle('active', b.dataset.dock === name));
   $('#dock-chat').classList.toggle('hidden', name !== 'chat');
   $('#dock-log').classList.toggle('hidden', name !== 'log');
@@ -549,26 +613,34 @@ function prefillChat(text) {
 }
 async function sendChat() {
   if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+  if (S.running) { toast('단계 실행 중에는 디렉터 대화를 보낼 수 없습니다 (같은 폴더를 동시에 편집하게 됩니다)'); return; }
   const input = $('#chat-input');
   let msg = input.value.trim();
   if (!msg || S.chatBusy) return;
   if (S.chips.length) msg = S.chips.map((c) => c.context).join('\n') + '\n\n' + msg;
+  const dir = S.client.dir; // 전송 시점의 클라이언트 — 응답이 다른 클라이언트에 새지 않게
   S.chatBusy = true; $('#btn-chat-send').disabled = true;
   input.value = ''; S.chips = []; renderChips();
   addMsg('user', msg);
   const think = addMsg('think', '디렉터 작업 중…');
   const t0 = Date.now();
   const tick = setInterval(() => { think.textContent = `디렉터 작업 중… ${fmtDur(Date.now() - t0)}`; }, 1000);
-  const r = await window.api.chat.send(S.client.dir, msg);
-  clearInterval(tick); think.remove();
-  addMsg(r.ok ? 'dir' : 'err', r.text);
-  S.chatBusy = false; $('#btn-chat-send').disabled = false;
-  await refreshBoard(false);
+  try {
+    const r = await window.api.chat.send(dir, msg);
+    if (S.client && S.client.dir === dir) addMsg(r.ok ? 'dir' : 'err', r.text);
+  } catch (e) {
+    addMsg('err', '전송 실패: ' + e.message);
+  } finally {
+    clearInterval(tick); think.remove();
+    S.chatBusy = false; $('#btn-chat-send').disabled = false;
+  }
+  if (S.client && S.client.dir === dir) { input.focus(); await refreshBoard(false); }
 }
 $('#btn-chat-send').onclick = sendChat;
 $('#chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendChat(); } });
 $('#chat-reset').onclick = async () => {
   if (!S.client) return;
+  if (S.chatBusy) { toast('응답을 기다리는 중에는 초기화할 수 없습니다'); return; }
   await window.api.chat.reset(S.client.dir);
   $('#chat-log').innerHTML = '';
   addMsg('think', '새 대화를 시작합니다 (세션 초기화)');
@@ -582,7 +654,7 @@ ci.addEventListener('drop', (e) => {
   const card = e.dataTransfer.getData('text/sat-card');
   const file = e.dataTransfer.getData('text/sat-file');
   if (card) { const c = JSON.parse(card); S.chips.push({ label: c.id, context: `[카드 ${c.id} · ${c.topic} · 현재 단계 ${STAGE_LABEL[c.stage]}]` }); }
-  if (file) { S.chips.push({ label: file.split('/').pop(), context: `[파일 ${file}]` }); }
+  if (file) { S.chips.push({ label: file.split(/[\\/]/).pop(), context: `[파일 ${file}]` }); }
   renderChips(); switchDock('chat'); ci.focus();
 });
 
@@ -600,7 +672,9 @@ function logLine(source, line) {
 }
 
 function openInspector(p) {
+  S.inspectorN = p.n;
   $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden');
+  $$('#dock-seg button').forEach((b) => b.classList.remove('active'));
   const box = $('#dock-inspector');
   box.classList.remove('hidden');
   const color = `var(--ch-${p.channel})`;
@@ -662,6 +736,15 @@ function openDrawer() {
     for (const row of $$('.file-row', sheet)) row.style.display = row.dataset.rel.toLowerCase().includes(q) ? '' : 'none';
   };
   for (const row of $$('.file-row', sheet)) {
+    // 오버레이가 독을 덮어 드래그가 닿지 않으므로 '첨부' 버튼이 확실한 경로
+    const attach = document.createElement('button');
+    attach.className = 'chip'; attach.textContent = '첨부';
+    attach.onclick = (e) => {
+      e.stopPropagation();
+      S.chips.push({ label: row.dataset.rel.split(/[\\/]/).pop(), context: `[파일 ${row.dataset.rel}]` });
+      renderChips(); closeOverlay(); switchDock('chat'); $('#chat-input').focus();
+    };
+    row.appendChild(attach);
     row.onclick = async () => {
       const r = await window.api.ws.readFile(S.client.dir, row.dataset.rel);
       $('#drawer-preview').innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}">` : `<pre>${esc(r.text)}</pre>`) : `<p class="muted">${esc(r.error)}</p>`;
@@ -784,8 +867,28 @@ async function maybeWizard() {
 
 // ---- main-process events --------------------------------------------------------------------
 window.api.onLog(({ source, line }) => logLine(source, line));
-window.api.onBoard((b) => { if (S.client) { applyBoard(b, false); window.api.gates.get(S.client.dir).then((g) => { S.gates = g; renderGateBar(); }); } });
-window.api.onStage(({ state, stage }) => { if (state === 'start') setRunning(stage); else setRunning(null); });
+window.api.onBoard((payload) => {
+  const b = payload && payload.board ? payload.board : payload;
+  const dir = payload && payload.dir;
+  if (!S.client || (dir && dir !== S.client.dir)) return; // 다른 클라이언트의 잔여 푸시 무시
+  applyBoard(b, false);
+  window.api.gates.get(S.client.dir).then((g) => {
+    S.gates = g; renderGateBar();
+    // 열려 있는 승인 시트/인스펙터는 새 데이터로 재구성
+    if (S.approveNode && !$('#sheet-approve').classList.contains('hidden')) {
+      const fresh = g.nodes.find((n) => n.key === S.approveNode);
+      if (fresh) reopenApproveSheet(fresh);
+    }
+    if (S.inspectorN != null && !$('#dock-inspector').classList.contains('hidden')) {
+      const p = S.board.posts.find((x) => x.n === S.inspectorN);
+      if (p) openInspector(p);
+    }
+  });
+});
+window.api.onStage(({ state, stage }) => {
+  if (state === 'start') setRunning(stage);
+  else if (stage === S.running) setRunning(null); // 지연 도착한 이전 스테이지 end 무시
+});
 window.api.onUpdate(async (u) => {
   if (u.state === 'ready') { $('#tb-update').classList.remove('hidden'); }
   const el = $('#set-upd-status');
@@ -797,6 +900,12 @@ window.api.onUpdate(async (u) => {
     else if (u.state === 'error') el.textContent = `업데이트 오류: ${u.message}`;
   }
 });
+
+// 채널 필터 와이어는 리사이즈/스크롤에서 재계산
+let wireRaf = null;
+const redrawWire = () => { if (!wireRaf) wireRaf = requestAnimationFrame(() => { wireRaf = null; drawWire(); }); };
+window.addEventListener('resize', redrawWire);
+$('#channel-scroll').addEventListener('scroll', redrawWire);
 
 // ---- boot --------------------------------------------------------------------------------------
 (async function boot() {
