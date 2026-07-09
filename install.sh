@@ -23,6 +23,7 @@ SKILLS=(
   "kr-guardrail-check"
   "kr-voice-localizer"
   "naver-blog-writer"
+  "ima2"
 )
 
 for skill in "${SKILLS[@]}"; do
@@ -39,5 +40,5 @@ cp "$SCRIPT_DIR"/.claude/agents/*.md "$AGENTS_DIR/"
 echo "  ✓ team agents (copywriter, creative-designer, video-producer, compliance-reviewer)"
 
 echo ""
-echo "Done. All 16 skills installed to $SKILLS_DIR, team agents to $AGENTS_DIR"
+echo "Done. All 17 skills installed to $SKILLS_DIR, team agents to $AGENTS_DIR"
 echo "Open Claude Code and run /content-director (or /social-media-manager) to get started."

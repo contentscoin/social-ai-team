@@ -39,6 +39,8 @@ ipcMain.handle('setup:installSkills', () => setup.installSkills());
 ipcMain.handle('setup:installCodex', () => setup.installCodexCli((line) => send('log', { source: 'setup', line })));
 ipcMain.handle('setup:codexLogin', () => setup.codexOAuthLogin((line) => send('log', { source: 'setup', line })));
 ipcMain.handle('setup:registerMcp', () => setup.registerCodexMcp((line) => send('log', { source: 'setup', line })));
+ipcMain.handle('setup:installIma2', () => setup.installIma2((line) => send('log', { source: 'setup', line })));
+ipcMain.handle('setup:ima2Setup', () => pipeline.openInteractiveTerminal(app.getPath('home'), 'ima2 setup'));
 
 // ---- Workspace (clients) ---------------------------------------------------
 ipcMain.handle('ws:list', () => workspace.listClients());

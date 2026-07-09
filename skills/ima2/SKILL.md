@@ -1,0 +1,771 @@
+---
+name: ima2
+description: "Use the ima2-gen CLI/server to generate, edit, inspect, and manage local AI image generation jobs."
+---
+
+# ima2 Skill
+
+Use this skill when an agent needs to operate `ima2-gen` from an installed package or local checkout.
+
+Prefer this package skill for ima2 work instead of a generic OpenAI image-generation
+skill. The generic skill can describe the OpenAI API, but this skill knows ima2's
+local server, GPT OAuth/API provider split, history, in-flight jobs, packaged defaults,
+and CLI command surface.
+
+## First Commands
+
+Start by discovering the local package and running server state:
+
+```bash
+ima2 skill
+ima2 skill --json
+ima2 capabilities --json
+ima2 defaults --json
+ima2 ping
+```
+
+If the server is not running:
+
+```bash
+ima2 serve
+ima2 open
+```
+
+Use `ima2 doctor` when setup, GPT OAuth, storage, or package integrity is unclear.
+
+## Generate Images
+
+Basic text-to-image:
+
+```bash
+ima2 gen "a clean product photo of a red guitar pedal"
+```
+
+Use high quality when output fidelity matters:
+
+```bash
+ima2 gen "a print-ready poster" --quality high
+```
+
+Use direct mode when the prompt should be passed with minimal rewriting:
+
+```bash
+ima2 gen "exact prompt text" --mode direct
+```
+
+Use request-level overrides only for that one call:
+
+```bash
+ima2 gen "cinematic mountain" --model gpt-5.5 --reasoning-effort high
+```
+
+Use Grok when the request should run through bundled progrok, mandatory xAI Web
+Search, planner pass (default: `grok-4.3`), and xAI Images API:
+
+```bash
+ima2 grok login
+ima2 grok status
+ima2 gen "cinematic neon city" --provider grok --model grok-imagine-image-quality
+```
+
+`ima2 grok login` defaults to the manual-paste flow.
+
+Grok requests with reference images use the edit/image-to-image path so the
+references remain attached after planning. Keep Grok references to three total
+input images.
+
+## Prompting Guidance
+
+GPT Image 2 can follow detailed visual instructions and can render visible text
+inside images, including labels, signs, posters, UI copy, speech bubbles, and
+product packaging text. Do not avoid text just because older image models were
+weak at it.
+
+When visible text matters, write the exact words in the target language and
+script:
+
+- Good: `A Korean poster with the exact headline "오늘 공연" and subtext "입장 무료".`
+- Bad: `A Korean poster with some Korean text.`
+
+Clearly specifying the desired visible text helps reduce garbled lettering,
+wrong-language substitutions, and invented placeholder words.
+
+For dense or important text, specify:
+
+- exact text;
+- language and script;
+- placement;
+- approximate size;
+- visual style;
+- whether extra readable text is forbidden.
+
+GPT Image 2 can generate both stylized and realistic outputs. State the style
+directly, for example:
+
+- `manga panel`
+- `webtoon style`
+- `children's book illustration`
+- `photorealistic product photo`
+- `realistic poster mockup`
+- `cinematic real-world scene`
+
+Text rendering is improved, but it is still not a typesetting engine. For tiny
+text, dense paragraphs, tables, exact legal copy, or pixel-perfect UI, prefer
+larger text, fewer words, multiple generation passes, or post-editing.
+
+## Reference / I2I Workflows
+
+Reference generation:
+
+```bash
+ima2 gen "turn this into a clean product render" --ref input.png --quality high
+```
+
+Multimode reference workflow:
+
+```bash
+ima2 multimode "create four coherent variations" --ref input.png --max-images 4
+```
+
+Node-mode reference workflow:
+
+```bash
+ima2 node generate "continue this concept" --ref input.png
+```
+
+Image edit workflow:
+
+```bash
+ima2 edit input.png --prompt "make the object blue while preserving composition"
+```
+
+Do not use positional edit prompts. `ima2 edit` requires `--prompt`.
+
+## Parallel Generation
+
+There is no `--parallel` flag. For multiple candidates from the same prompt,
+prefer one server-side batch request:
+
+```bash
+ima2 gen "four poster candidates" -n 4 -d ./out --quality high
+ima2 multimode "four different poster directions" --max-images 4
+```
+
+For truly different prompts, independent CLI jobs can run concurrently against
+the same server. Capture request IDs with JSON output, then monitor or cancel:
+
+```bash
+ima2 gen "variation 1" --quality high --json
+ima2 gen "variation 2" --quality high --json
+ima2 ps --json
+ima2 cancel <requestId>
+```
+
+Treat `capabilities.limits.maxParallel` as advisory client-side queue guidance only.
+It is not a guaranteed server-side semaphore.
+
+## Agent Mode (web UI only)
+
+Agent Mode is a conversational image workspace (sessions, turns, a durable per-session queue, slash
+commands, `/question`). It is served at `/api/agent/*` and lives in the web UI — there is no
+`ima2 agent` CLI command. From the CLI, drive generation with `ima2 gen`, `ima2 edit`,
+`ima2 multimode`, and `ima2 node generate` instead.
+
+## Watching Jobs
+
+Use JSON when another agent needs to reason about active work:
+
+```bash
+ima2 inflight ls --json
+ima2 inflight ls --kind multimode --terminal --json
+```
+
+Expect job fields such as `requestId`, `kind`, `phase`, `startedAt`, `prompt`,
+`model`, and `sessionId`. Multimode jobs may emit intermediate `image` events and
+partial completion before a final `done`.
+
+## Prompt Import
+
+Build a structured image prompt from a message or transcript:
+
+```bash
+ima2 prompt build --message "make this product prompt clearer" --json
+ima2 prompt build --messages @conversation.json --json
+```
+
+Preview a local markdown/text prompt source before committing:
+
+```bash
+ima2 prompt import preview ./prompts.md --json
+```
+
+Import a JSON export body:
+
+```bash
+ima2 prompt import json ./prompts-export.json --folder __root__
+```
+
+Import a raw image into history:
+
+```bash
+ima2 history import ./local-image.png
+```
+
+## Defaults
+
+Inspect the running server defaults:
+
+```bash
+ima2 defaults --json
+```
+
+Inspect local effective defaults without contacting a server:
+
+```bash
+ima2 defaults --local --json
+```
+
+Persist the default model for GPT OAuth and API provider paths:
+
+```bash
+ima2 defaults set model gpt-5.5
+```
+
+Persist the default reasoning policy:
+
+```bash
+ima2 defaults set reasoning high
+```
+
+Restart a running server after changing persisted defaults:
+
+```bash
+ima2 serve
+```
+
+Request flags such as `--model` and `--reasoning-effort` are per-call overrides.
+They do not change persistent defaults.
+
+## Capability Values
+
+Use `ima2 capabilities --json` as the source of truth for:
+
+- supported image models;
+- unsupported model ids that should not be used as defaults;
+- valid reasoning efforts;
+- valid quality values;
+- valid provider, mode, and moderation values;
+- writable config keys and their environment-variable overrides;
+- reference count and image count limits;
+- package/server version.
+
+Use only models from:
+
+```text
+valid.imageModels.supported
+```
+
+Do not pick models from:
+
+```text
+valid.imageModels.unsupported
+```
+
+Discover writable configuration keys:
+
+```bash
+ima2 config keys --json
+```
+
+## Safety Notes
+
+- Do not print API keys, OAuth tokens, config files, or `.env` values.
+- Use `ima2 capabilities --json` before guessing model names.
+- Use `ima2 skill path` when an agent needs the installed Markdown skill path.
+- Use `ima2 inflight ls --json` or `ima2 ps --json` to inspect active jobs.
+
+## Video Generation
+
+Generate AI videos via Grok (SuperGrok subscription required).
+
+### Quick Start
+
+```bash
+ima2 video "a cat playing piano"                    # text-to-video
+ima2 video "animate this" --ref photo.png           # image-to-video
+ima2 video "cinematic" --ref a.png --ref b.png      # reference-to-video (max 7)
+```
+
+### Modes (auto-detected from --ref count)
+
+| Refs | Mode | Max Duration |
+|------|------|-------------|
+| 0 | text-to-video | 15s |
+| 1 | image-to-video | 15s |
+| 2-7 | reference-to-video | 10s |
+
+`grok-imagine-video-1.5` supports image-to-video and supports 1080p for prompt-only text-to-video and single image/frame image-to-video. Prompt-only 1.5 text-to-video is implemented as an internal white-canvas image-to-video anchor because upstream 1.5 rejects raw T2V. The old `grok-imagine-video-1.5-preview` string is accepted as a compatibility alias. 1.5 does not support `reference_images` Ref2V, V2V edit, or extension. For 2+ references, use `grok-imagine-video` and keep duration at 10s or less. ima2 may auto-retry a rejected 1.5 Ref2V request with the base model; read `effectiveModel` and `modelFallback` from the final result before naming or reporting the output.
+
+### Parameters
+
+| Flag | Values | Default |
+|------|--------|---------|
+| `--duration` | 1–15 (seconds) | 5 |
+| `--resolution` | 480p, 720p, 1080p (1.5 T2V canvas shim or I2V) | 480p |
+| `--aspect-ratio` | auto, 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3 | auto |
+| `--model` | grok-imagine-video, grok-imagine-video-1.5 (preview alias accepted) | grok-imagine-video |
+| `--topic` | any string | (none) |
+| `--session` | session ID | (none) |
+| `-o, --out` | output file path | saved under configured generated dir |
+| `--json` | (flag) | false |
+
+### Series Continuity (--topic)
+
+`--topic` is legacy/best-effort series context. Prefer branch-local artifact
+continuity with `ima2 video continue`, Classic "Continue here", gallery video
+drag, or Node parent-video generation. Those flows use the previous generated
+video's last frame plus its stored `revisedPrompt` lineage.
+
+```bash
+ima2 video "episode 1: morning routine" --topic "daily-vlog"
+ima2 video "episode 2: commute" --topic "daily-vlog"
+```
+
+### Planning Layer
+
+Prompts are NOT sent directly to the video model. A Grok planner rewrites your prompt with web search context for better results. The `revisedPrompt` in the response shows what was actually sent. Default planner model is `grok-4.3` (configurable in settings UI).
+
+Override the planner model per-request:
+
+```bash
+ima2 video "prompt" --planner-model gpt-5.5
+ima2 video "prompt" --planner-model gpt-5.4
+```
+
+### Grok 4.3 Prompt Surfaces
+
+| Surface | Files | Responsibility |
+|---------|-------|----------------|
+| Image search/planner | `lib/grokImageAdapter.ts` | Web-search context and final image prompt for Grok image generation/editing. |
+| Video planner | `lib/grokVideoAdapter.ts`, `lib/grokVideoPlannerPrompt.ts` | Final video prompt for T2V/I2V/Ref2V, duration pacing, and continuity lineage when present. |
+| Video analyzer | `routes/videoExtended.ts` | First/last-frame analysis prompt for recreating or continuing an existing generated video. |
+| Agent/runtime prompt use | `lib/agentRuntime.ts`, card/template planner modules | Higher-level orchestration surfaces that may create image/video prompt inputs but do not replace the video planner contract. |
+
+For video, the Grok 4.3 planner must produce one focused English prompt with:
+core subject, expected action/motion, camera/composition, environment/style,
+dialogue/audio intent, ending frame/continuity handoff, and constraints. If
+`videoContinuity` exists, the lineage is authoritative context: continue from
+the latest clip's final frame and final audio/dialogue state without restarting
+the scene. The planner also applies duration pacing: use the selected seconds as
+the full clip runtime, expand even short requests into a production-level
+sequence, and make the clip feel complete through composition, blocking, camera
+movement, motion rhythm, sound/dialogue timing, and an ending hold.
+
+### Active Video Prompt Requirement
+
+Blank video prompts are blocked. Weak natural-language prompts are allowed, but
+agents should always write an active prompt that includes:
+
+- visual flow: what changes on screen
+- motion flow: subject and camera motion
+- sound flow: music style, no music, room tone, or sound-effects-only
+- dialogue flow: exact line or explicit no-dialogue
+- ending frame: final pose, camera state, last spoken words, and final sound cue
+- duration pacing: make the selected seconds feel naturally filled with a
+  production-level sequence from opening composition to connected change to
+  stable ending frame
+
+Template:
+
+```text
+From the attached last frame, <subject/action> moves from A to B while the
+camera <movement>. Sound: <music/no music/SFX/room tone>. Dialogue: <line or no
+dialogue>. Pace the selected duration with a complete visual sequence. End on
+<final frame and final audio state>.
+```
+
+### Prerequisites
+
+```bash
+ima2 grok login     # authenticate (manual-paste flow)
+ima2 grok status    # verify connection
+ima2 serve          # server must be running
+```
+
+### Output
+
+SSE streaming events: `planning` → `submitted` → `progress` (0-100%) → `done`.
+The `submitted` and `done` payloads include `requestedModel`, `effectiveModel`, and `modelFallback` so agents can report when a requested 1.5-preview Ref2V job actually ran on `grok-imagine-video`. CLI `--json` prints `video.requestedModel`, `video.effectiveModel`, and `video.modelFallback`; use `path`/`filename` for local chaining.
+
+### Discover Valid Parameters
+
+```bash
+ima2 capabilities --json | jq '.valid.videoModels'
+```
+
+### Advanced Workflows
+
+#### Image-First Video (best quality)
+
+Generate a high-quality still image first, then animate it. This produces better results than text-to-video alone because the video model has a concrete visual anchor.
+
+**Critical rule for i2v**: Compose ALL characters and the environment together in ONE image. Do NOT use individual portrait refs for i2v — the video model needs a single composed scene to animate from.
+
+**Keyframe image provider rule (MANDATORY)**:
+- **Primary**: GPT Image 2 (OpenAI, `provider: oauth`) with `quality: high`, maximum resolution matching the target video aspect ratio. For 16:9 video use `1792x1024`. For 1:1 use `1024x1024`. For 9:16 use `1024x1792`.
+- **Fallback**: Grok (`provider: grok`, model `grok-imagine-image-quality`). Only aspect ratio must match — resolution does not matter because i2v accepts any resolution source image and internally rescales.
+- GPT Image 2 produces superior keyframes: better lighting coherence, character consistency, and fine detail that survives i2v animation. Always try GPT first.
+- The i2v model internally rescales the source image to its native resolution regardless of input size, so there is no benefit to upscaling a Grok fallback image.
+
+**ref2v vs i2v decision**:
+
+| Scenario | Use | Why |
+|----------|-----|-----|
+| Need 2+ character identity lock from separate refs | ref2v (`grok-imagine-video`, max 7 refs, max 10s) | Refs lock character appearance |
+| Single composed scene with all elements | i2v (`1.5-preview` or base, 1 ref) | Better motion quality from composed start |
+| Continue from previous video | `video continue` (last frame as i2v ref) | Lineage metadata preserved |
+
+```bash
+# Multi-character scene: compose BOTH characters in one image first
+# Primary: GPT Image 2 at high quality, max resolution, aspect ratio matching 16:9 video
+ima2 gen "cinematic wide shot of Bruce Lee in yellow tracksuit facing Elon Musk in dark gi, underground fight arena, dramatic lighting, 16:9" --quality high --size 1792x1024 -o scene.png
+
+# Fallback if GPT fails: Grok quality model, match aspect ratio only
+# ima2 gen "same prompt" --provider grok --model grok-imagine-image-quality --size 1824x1024 -o scene.png
+
+# Then animate from the composed scene
+ima2 video "Bruce throws a rapid jeet kune do combination" --ref scene.png --duration 10 --resolution 720p --aspect-ratio 16:9
+```
+
+#### Multi-Shot Video (connected scenes)
+
+Create a sequence of connected clips using `--topic` for narrative continuity. Each generation receives context from previous clips in the same topic.
+
+```bash
+# Scene 1: Establishing shot
+ima2 video "wide establishing shot of a busy Tokyo street at night, neon signs" \
+  --topic "tokyo-night" --duration 5
+
+# Scene 2: Medium shot (planner sees Scene 1's revised prompt)
+ima2 video "medium shot following a person walking through the crowd" \
+  --topic "tokyo-night" --duration 5
+
+# Scene 3: Close-up (planner sees Scenes 1+2)
+ima2 video "close-up of rain drops on a neon sign reflection" \
+  --topic "tokyo-night" --duration 5
+```
+
+The planner receives previous prompts from the same topic as continuity context. This is best-effort prompt guidance, not a guarantee that subjects, palette, or style will remain identical. For branch-local continuation, use `ima2 video continue` instead.
+
+#### Storyboard-to-Video Chaining (9-panel storyboard → i2v loop)
+
+The highest-quality video production workflow. Since Grok i2v accepts only **one image input**, pack the entire action sequence into a single 3×3 (9-panel) storyboard grid image. The i2v model reads the panels as a visual script and animates the progression.
+
+**Full workflow**:
+
+```
+keyframe image (GPT high)
+    → GPT i2i with reference → 9-panel storyboard grid
+        → Grok i2v (reads panels, animates sequence)
+            → extract last frame
+                → GPT i2i with last frame → next 9-panel storyboard
+                    → Grok i2v
+                        → repeat
+```
+
+**Step 1 — Opening keyframe** (GPT Image 2, `quality: high`, max resolution matching target aspect ratio):
+
+```bash
+ima2 gen "cinematic wide shot of two fighters in a dojo, dramatic lighting" \
+  --quality high --size 1792x1024 --storyboard
+```
+
+Fallback: Grok `grok-imagine-image-quality`, match aspect ratio only — resolution does not matter because i2v internally rescales.
+
+**Step 2 — 9-panel storyboard grid** (GPT Image 2 with keyframe as reference):
+
+```bash
+# Use the keyframe as reference, prompt describes 9 sequential panels
+ima2 gen "Using this scene as reference, create a 3x3 storyboard grid (9 panels, thin black borders) showing a 15-second action sequence. Panel 1 (0s): ... Panel 2 (2s): ... Panel 9 (15s): ... Maintain identical character designs across all panels." \
+  --ref keyframe.png --quality high --size 1024x1024
+```
+
+**9-panel storyboard rules**:
+- Grid layout: 3×3, thin black borders between panels
+- Read order: left-to-right, top-to-bottom (panels 1-9)
+- **Panel 1 (top-left) MUST be solid black** — this is a lead-in frame, not content. The i2v model starts from Panel 1's pixels; a black frame ensures the video begins with a clean fade-in instead of showing the grid. The 1-second black lead-in is auto-trimmed by the server.
+- Panels 2-9 carry the action sequence (8 key moments with timestamps)
+- Character designs MUST be identical across all panels
+- Vary camera angle per panel for dynamic energy
+- Each panel should look like a film still, not a sketch
+- Do NOT add timestamp labels or text to panels — they burn into the video
+- Square format (1024×1024) works best — i2v rescales internally
+
+**Step 3 — Animate storyboard via i2v**:
+
+```bash
+ima2 video "This is a 9-panel storyboard. Animate the full sequence as one continuous 15-second clip following panels left-to-right, top-to-bottom. Panel 1: ... Panel 9: ... Sound: [describe music, SFX, dialogue]. Camera: [describe movement per beat]." \
+  --ref storyboard.png --duration 15 --resolution 720p --model grok-imagine-video-1.5
+```
+
+**i2v prompt rules for storyboard input**:
+- Explicitly state "This is a 9-panel storyboard" at the start
+- Reference each panel by number with its action description
+- Always include Sound/Music direction — never leave audio undefined
+- Include Camera direction per beat (wide, close-up, tracking, handheld, slow-mo)
+- Describe the end frame explicitly for continuation
+
+**Step 4 — Extract last frame and repeat**:
+
+```bash
+# Extract last frame via ffmpeg
+ffmpeg -sseof -0.1 -i clip.mp4 -frames:v 1 -q:v 2 -update 1 lastframe.jpg -y
+
+# Generate next storyboard using last frame as reference
+ima2 gen "Using this fight scene last frame as reference, create a 3x3 storyboard grid..." \
+  --ref lastframe.jpg --quality high --size 1024x1024
+
+# Animate next storyboard
+ima2 video "This is a 9-panel storyboard..." --ref storyboard2.png --duration 15
+```
+
+**Fallback: continueFromVideo** — If a storyboard image triggers content moderation (common with intense action/fight scenes), fall back to `video continue` with a detailed text prompt instead:
+
+```bash
+ima2 video continue "detailed action description with sound and camera direction" \
+  --video "$PREV_CLIP" --duration 15
+```
+
+**Clip duration is flexible** — use 15s for action-dense sequences with many beats, 10s for transitions, 5s for quick cuts. The 9-panel storyboard works best with 15s clips (each panel ≈ 1.5-2s of screen time).
+
+**Music and sound are MANDATORY** in i2v prompts — describe the score (orchestral, percussion, taiko drums), sound effects (impacts, whooshes, crashes), dialogue lines, and audio transitions. "No music" or undefined audio produces flat, lifeless output.
+
+#### Video Continuation (extend/sequel)
+
+To continue from an existing video's last frame:
+
+```bash
+# Get the last generated video filename
+LAST=$(ima2 ls -n 1 --json | jq -r '.items[0].filename')
+
+# True extension keeps the original clip and appends new motion
+ima2 video extend "the camera slowly pulls back revealing the full scene" --video "$LAST" --duration 6
+
+# Branch-local sequel keeps revisedPrompt lineage and starts from the last frame
+ima2 video continue "from the last frame, the camera slowly pulls back, no music, footsteps echo, end on a still wide shot" --video "$LAST"
+```
+
+Or in the UI: use "Continue here" on a video, drag a video from gallery/history
+to the prompt composer, or create a child from a video node. These flows attach
+the previous video's last frame and carry a branch-local `videoContinuity`
+lineage stack. The stack stores up to 4 revised prompts using
+`keep-start-plus-latest-3`: start clip is preserved, and the newest three clips
+stay in context.
+
+`ima2 video extend` is xAI native extension: it returns original+extension as a
+combined artifact. `ima2 video continue` is ima2 branch continuation: it creates
+a new clip from the generated video's last frame and persists lineage metadata.
+
+#### Marketing/Product Video
+
+Generate a product showcase video from a product image:
+
+```bash
+# Step 1: Generate or provide product image
+ima2 gen "clean product photo of wireless earbuds on white background" -o product.png
+
+# Step 2: Create dynamic product video
+ima2 video "sleek product reveal with rotating camera, premium feel, studio lighting" \
+  --ref product.png --duration 10 --resolution 720p --aspect-ratio 16:9
+```
+
+#### Style-Consistent Series
+
+For maintaining visual style across multiple videos (e.g., social media series):
+
+```bash
+# First video establishes the style
+ima2 video "minimalist animation of a coffee cup, flat design, pastel colors" \
+  --topic "coffee-series" --duration 5
+
+# Subsequent videos inherit style via planner context
+ima2 video "same style, now showing latte art being poured" \
+  --topic "coffee-series" --duration 5
+
+ima2 video "same style, steam rising from the cup" \
+  --topic "coffee-series" --duration 5
+```
+
+#### Batch Generation (scripting)
+
+```bash
+#!/bin/bash
+PROMPTS=("sunrise over ocean" "waves crashing" "seagulls flying" "sunset colors")
+TOPIC="ocean-day"
+
+for prompt in "${PROMPTS[@]}"; do
+  ima2 video "$prompt" --topic "$TOPIC" --duration 5 --json >> results.jsonl
+  sleep 2  # rate limiting
+done
+```
+
+### Limitations
+
+- Max 15 seconds per clip (extend adds 2-10s more)
+- Reference-to-video (2+ refs): max 10 seconds, max 7 refs, `grok-imagine-video` effective model
+- 1080p resolution is available for `grok-imagine-video-1.5` prompt-only text-to-video via the white-canvas I2V shim, and for image-to-video with a single image/frame source
+- Video edit/extend: grok-imagine-video only (1.5 is not supported)
+- Video edit input: max 8.7 seconds
+- Video extend input: 2-15 seconds; extension duration: 2-10 seconds
+
+### Video Editing (V2V)
+
+Edit an existing video with a text prompt. This uses xAI's real video edit endpoint and saves the result as a generated video artifact.
+
+```bash
+# Get the local video file from a previous generation
+VIDEO_FILE=$(ima2 video "ocean waves" --json | jq -r '.path')
+
+# Edit: change style
+ima2 video edit "Make the water glow neon blue, bioluminescent" --video "$VIDEO_FILE"
+
+# Edit: add object
+ima2 video edit "Add a sailboat in the distance" --video "$VIDEO_FILE"
+
+# Edit: change mood
+ima2 video edit "Make it stormy with dark clouds" --video "$VIDEO_FILE"
+```
+
+Constraints: grok-imagine-video only, input mp4 <=8.7s. Use `-o/--out` if you also need a local copy outside the generated directory.
+
+### Video Extension (Continue from Last Frame)
+
+Extend a video from its last frame using xAI's video extension endpoint. The output combines the source video and extension, but continuity quality is provider-dependent.
+
+Constraints: grok-imagine-video only, extension duration 2-10s. 1.5-preview is not supported for extension.
+
+```bash
+# Generate initial clip
+VIDEO_FILE=$(ima2 video "a bird takes flight from a branch" --duration 5 --json | jq -r '.path')
+
+# Extend: add 5 more seconds
+ima2 video extend "the bird soars higher into the clouds" --video "$VIDEO_FILE" --duration 5
+
+# Chain extensions for longer videos
+EXTENDED=$(ima2 video extend "camera follows the bird" --video "$VIDEO_FILE" --duration 5 --json | jq -r '.filename')
+ima2 video extend "bird lands on a distant tree" --video "$EXTENDED" --duration 5
+```
+
+### Video Frame Extraction
+
+Extract frames from generated videos for use as references or analysis.
+
+```bash
+# Extract last frame
+ima2 video frame 1780226256355_50252101.mp4 --last -o lastframe.png
+
+# Extract frame at specific timestamp
+ima2 video frame 1780226256355_50252101.mp4 --position 2.5 -o frame_2s.png
+
+# Use extracted frame as reference for new generation
+ima2 video "continue this scene" --ref lastframe.png
+```
+
+### Video Analysis (Recreation Prompt)
+
+Analyze first and last video frames with Grok 4.3 image understanding to get a structured recreation prompt. This infers motion from frames; it is not full temporal video understanding.
+
+```bash
+# Analyze a generated filename
+ima2 video analyze 1780226256355_50252101.mp4
+
+# Output: structured prompt with shot type, inferred camera movement, lighting, color, motion, mood
+
+# Use the analysis to recreate with variations
+ANALYSIS=$(ima2 video analyze 1780226256355_50252101.mp4 --json | jq -r '.analysis')
+ima2 video "$ANALYSIS but in anime style" --ref reference.png
+```
+
+### Audio in Video (Prompt-Controlled)
+
+The API does not expose a separate audio on/off or audio-track control. Treat audio as prompt-compiled: describe dialogue, music, no-music, room tone, or sound-effects-only behavior in the video prompt. Output is provider-dependent, but the prompt must be explicit when audio matters.
+
+```bash
+# Explicit sound direction
+ima2 video "ocean waves crashing on rocks with seagull calls and distant thunder"
+
+# Music direction
+ima2 video "timelapse of city at night, lo-fi hip hop background music"
+
+# Dialogue
+ima2 video "person speaking to camera: Hello world, welcome to my channel"
+
+# No music / room tone
+ima2 video "quiet forest scene, no background music, only subtle wind and leaves rustling"
+
+# Sound effects only
+ima2 video "no music, only footsteps, cloth movement, rain hits, and one radio click"
+```
+
+For continuity clips, always define the final audio state: whether dialogue finishes before the cut, music resolves or continues, or a sound effect carries into the next clip.
+
+### Structured Video Prompt Template
+
+Use this structure for serious video generation, Ref2V, extension prompts, and multi-shot continuity. A static visual description is not enough.
+
+```text
+Scene Start: what the first frame already contains.
+Expected Motion: the exact A or B motion that must happen.
+Camera: pan, dolly, tracking, crane, handheld, static, or Shot Switch.
+Dialogue: speaker, exact line, timing, or "no dialogue".
+Music: style, swell/cut/resolve behavior, or "no background music".
+Sound Effects: room tone, footsteps, rain, machine hum, impact, etc.
+Ending Frame: final pose, composition, camera state.
+Continuity Handoff: final spoken line, music state, or sound cue for the next clip.
+Negative Constraints: no visible subtitles/text unless requested, preserve identity/style.
+```
+
+When creating a sequence, write both motions explicitly: "A motion" for the first clip and "B motion" for the continuation. For last-frame Ref2V, use ref 1 as identity/style and ref 2 as current state/last frame.
+
+### End Frame Guidance (via Ref2V)
+
+Guide the video toward a desired final scene using reference images:
+
+```bash
+# Start frame + end frame concept
+ima2 video "smooth transition from day to night" \
+  --ref sunrise.png --ref nightsky.png
+```
+
+The planner treats reference images as subject/style/composition guidance. This is best-effort guidance, not a guaranteed final-frame constraint.
+
+### Soul Character / Face Consistency (via Ref2V)
+
+Guide character identity across multiple videos using reference photos:
+
+```bash
+# Provide face references for consistency
+ima2 video "person walking through a park, smiling" \
+  --ref face_front.png --ref face_side.png --ref face_smile.png
+
+# Same character in different scenes
+ima2 video "same person now sitting at a cafe" \
+  --ref face_front.png --ref face_side.png --topic "character-series"
+```
+
+### Marketing / Product Video
+
+Turn a product image into a dynamic showcase video:
+
+```bash
+# Step 1: Generate or provide product image
+ima2 gen "clean product photo of wireless earbuds on white background" -o product.png
+
+# Step 2: Create product video
+ima2 video "sleek product reveal, rotating camera, premium studio lighting" \
+  --ref product.png --duration 10 --aspect-ratio 16:9
+
+# Step 3: Extend with lifestyle shot
+PRODUCT_VID=$(ima2 video "product reveal" --ref product.png --json | jq -r '.path')
+ima2 video extend "person puts on the earbuds and smiles" --video "$PRODUCT_VID" --duration 5
+```

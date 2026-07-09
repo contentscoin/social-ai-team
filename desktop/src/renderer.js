@@ -17,6 +17,8 @@ async function refreshSetup() {
   for (const li of $$('#setup-checks li')) setBadge(li, !!s[li.dataset.k]);
   $('#btn-install-codex').disabled = s.codex;
   $('#btn-codex-login').disabled = !s.codex || s.codexAuthed;
+  $('#btn-install-ima2').disabled = s.ima2;
+  $('#btn-ima2-setup').disabled = !s.ima2;
 }
 
 function reportResult(label, r) {
@@ -51,6 +53,16 @@ $('#btn-register-mcp').onclick = async () => {
   switchTab('logs');
   const r = await window.api.setup.registerMcp();
   reportResult('codex MCP 등록', r);
+};
+$('#btn-install-ima2').onclick = async () => {
+  switchTab('logs');
+  const r = await window.api.setup.installIma2();
+  reportResult('ima2 설치', r);
+  refreshSetup();
+};
+$('#btn-ima2-setup').onclick = async () => {
+  log('setup', '터미널에서 ima2 setup이 열립니다 — 1(GPT OAuth: 이미지) / 2(Grok: +영상) / 3(둘 다) 중 선택하세요. 완료 후 이 앱을 재시작하면 배지가 갱신됩니다.');
+  await window.api.setup.ima2Setup();
 };
 
 // ---- Clients ------------------------------------------------------------------

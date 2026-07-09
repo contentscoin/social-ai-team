@@ -193,7 +193,7 @@ description: Short-form video script specialist for Instagram Reels, YouTube Sho
 
 운영자가 원하면 클립별로 **엔진 투입용 프롬프트 스펙**을 텍스트로 작성합니다 (Runway / Seedance 계열 형식).
 
-> **명확히 해둘 것:** 이것은 **텍스트 산출물**입니다. 이 저장소에는 비디오 생성 MCP가 없으며, 이 스펙을 자동 실행할 수 없습니다. 클라이언트가 외부 엔진에 직접 붙여 넣는 용도입니다. **저장소 안의 유일한 렌더 경로는 `/social-creative-designer`의 Nano Banana(`mcp__nanobanana__generate_image`) 스톱모션 모드** — 6프레임 시퀀스를 루핑 MP4로 만드는 방식 — 뿐이며, 대본이 스톱모션으로 구현 가능하면 그 경로를 우선 제안합니다.
+> **명확히 해둘 것:** 이것은 기본적으로 **텍스트 산출물**입니다. 단, 실행 경로가 두 가지 있습니다: ① **ima2 + Grok OAuth**가 설치돼 있으면 이 스펙을 실제 영상으로 실행할 수 있습니다 — `ima2 video "<클립 프롬프트>" --duration <초> --ref <키프레임>`, 클립 체인은 `ima2 video continue`(직전 클립의 마지막 프레임에서 이어붙임 — 이 스킬의 ≤15초 클립 분할·루프 설계와 정확히 맞물립니다). 실행은 video-producer 에이전트가 디렉터의 명시적 지시로 수행합니다 (`sop/creative-designer/ima2-render.md` 참조). ② **Nano Banana 스톱모션 모드**(`/social-creative-designer`) — 6프레임 시퀀스를 루핑 MP4로 만드는 방식. 둘 다 없으면 클라이언트가 외부 엔진에 붙여 넣는 텍스트 핸드오프입니다.
 
 클립당 스펙 형식:
 

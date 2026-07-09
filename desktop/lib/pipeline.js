@@ -88,8 +88,8 @@ function stopCurrent() {
 }
 
 // Interactive stages (brand onboarding interview, free-form direction) — open a real terminal.
-function openInteractiveTerminal(dir) {
-  const cmd = 'claude "/content-director"';
+function openInteractiveTerminal(dir, cmdOverride) {
+  const cmd = cmdOverride || 'claude "/content-director"';
   const env = envWithPath();
   if (isWin) {
     spawn('cmd', ['/c', 'start', '"Social AI Team"', 'cmd', '/k', `cd /d "${dir}" && ${cmd}`], { detached: true, shell: false, env });

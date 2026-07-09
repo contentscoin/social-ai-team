@@ -2,14 +2,14 @@
 
 Nano Banana MCP가 없거나 운영자가 지시한 경우, 이미지 생성을 **OpenAI Codex CLI**(+ OpenAI Images API `gpt-image-1`)로 수행하는 경로입니다. `image-qa.md`의 모든 규칙(텍스트 세이프, 이중 스코어링, 재생성 상한 2회, 자산 프라이버시)은 이 경로에도 **동일하게** 적용됩니다.
 
-## 렌더 경로 우선순위 (creative-designer 에이전트 기준)
+## 렌더 경로 우선순위
 
-| 순위 | 경로 | 조건 |
-|---|---|---|
-| 1 | Nano Banana MCP (`mcp__nanobanana__generate_image`) | MCP 연결됨 — 기존 스킬 기본 경로 (Composite/Brand 모드 등 이미지 편집 필요 작업은 이 경로만 가능) |
-| 2a | **Codex MCP 위임 — pumasi 방식** (`mcp__codex__codex`) | codex가 MCP 서버로 등록돼 있고 (아래 등록 방법) codex 인증 완료. 조립된 프롬프트 + 출력 경로 규칙을 codex 서브에이전트에 위임하고 결과 파일 경로만 회수 (사용자 video-production 리포의 pumasi/image-generator 패턴) |
-| 2b | **Codex 렌더 스크립트** (`sop/creative-designer/scripts/codex_render.sh`) | MCP 위임 불가 시 동일 백엔드의 스크립트 경로. **Generate 모드(신규 생성)와 스토리보드 키프레임 전용** (2a도 동일 제약) |
-| 3 | 브리프 온리 (베이스라인) | 전부 불가 — 프롬프트 스펙만 텍스트로 산출 |
+> **통합 우선순위는 `ima2-render.md`의 표가 기준입니다**: ① Nano Banana MCP → ② ima2 (`ima2 gen`/`edit`) → ③ Codex (이 문서) → ④ 브리프 온리. 이 문서는 ③ Codex 경로의 상세 규약입니다.
+
+| 경로 | 조건 |
+|---|---|
+| **Codex MCP 위임 — pumasi 방식** (`mcp__codex__codex`) | codex가 MCP 서버로 등록돼 있고 (아래 등록 방법) codex 인증 완료. 조립된 프롬프트 + 출력 경로 규칙을 codex 서브에이전트에 위임하고 결과 파일 경로만 회수 (사용자 video-production 리포의 pumasi/image-generator 패턴) |
+| **Codex 렌더 스크립트** (`sop/creative-designer/scripts/codex_render.sh`) | MCP 위임 불가 시 동일 백엔드의 스크립트 경로. **Generate 모드(신규 생성)와 스토리보드 키프레임 전용** (위임 방식도 동일 제약) |
 
 **pumasi 방식 위임 계약 (2a):** 호출당 하나의 명확한 태스크만 전달합니다 — ① 최종 프롬프트 전문(재작성 금지 명시), ② 정확한 출력 파일 경로, ③ 크기/비율, ④ "파일 생성 후 경로만 보고" 지시. codex가 프롬프트를 손대지 않게 하는 것이 pumasi 원칙입니다 (프롬프트 작성 책임은 이쪽, 실행 책임은 codex).
 

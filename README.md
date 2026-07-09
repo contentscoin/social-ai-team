@@ -6,7 +6,7 @@ Built to run inside [Claude Code](https://claude.ai/code).
 
 > **Just getting started?** Read [SETUP.md](SETUP.md) — a full beginner walkthrough covering Claude Code, install, MCP setup, and your first client.
 
-> **🇰🇷 Team Mode (v3):** This fork adds a Korean-speaking delegating team on top of the original 10 skills — a `/content-director` orchestrator, 4 subagents (copywriter, creative-designer, video-producer, compliance-reviewer), and 5 new skills (`/reels-script`, `/ad-storyboard`, `/kr-guardrail-check`, `/kr-voice-localizer`, `/naver-blog-writer`) plus an image-QA SOP. The original 10 skills run unmodified underneath. See [TEAM.md](TEAM.md) (Korean) for the full team manual.
+> **🇰🇷 Team Mode (v3):** This fork adds a Korean-speaking delegating team on top of the original 10 skills — a `/content-director` orchestrator, 4 subagents (copywriter, creative-designer, video-producer, compliance-reviewer), and 5 new skills (`/reels-script`, `/ad-storyboard`, `/kr-guardrail-check`, `/kr-voice-localizer`, `/naver-blog-writer`) plus an image-QA SOP and render lanes for [ima2-gen](https://github.com/lidge-jun/ima2-gen) (OAuth image/video generation, `/ima2` skill vendored) and Codex. The original 10 skills run unmodified underneath. See [TEAM.md](TEAM.md) (Korean) for the full team manual.
 
 ---
 
@@ -160,7 +160,7 @@ bash install.sh
 
 **Windows:** double-click `install.bat` (or run it from the command line).
 
-This copies all 16 skills into `~/.claude/skills/` and the 4 team agents into `~/.claude/agents/` where Claude Code can find them.
+This copies all 17 skills into `~/.claude/skills/` and the 4 team agents into `~/.claude/agents/` where Claude Code can find them.
 
 ---
 

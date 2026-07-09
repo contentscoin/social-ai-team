@@ -40,22 +40,28 @@ async function cliVersion(name) {
 }
 
 async function checkEnvironment() {
-  const [claude, codex, node] = await Promise.all([cliVersion('claude'), cliVersion('codex'), cliVersion('node')]);
+  const [claude, codex, node, ima2] = await Promise.all([
+    cliVersion('claude'), cliVersion('codex'), cliVersion('node'), cliVersion('ima2'),
+  ]);
   let codexAuthed = false;
   if (codex.found) {
     const r = await runCmd('codex', ['login', 'status'], null, { timeoutMs: 20000 });
     codexAuthed = /logged in using/i.test(r.out);
   }
+  // ima2 setup writes ~/.ima2 — presence is the "configured" signal (OAuth details live inside)
+  const ima2Configured = ima2.found && fs.existsSync(path.join(HOME, '.ima2'));
   return {
     platform: process.platform,
     node: node.found,
     claude: claude.found,
     codex: codex.found,
     codexAuthed,
+    ima2: ima2.found,
+    ima2Configured,
     skillsInstalled: fs.existsSync(path.join(CLAUDE_DIR, 'skills', 'content-director', 'SKILL.md')),
     agentsInstalled: fs.existsSync(path.join(CLAUDE_DIR, 'agents', 'copywriter.md')),
-    paths: { claude: claude.path, codex: codex.path, node: node.path },
-    versions: { claude: claude.version, codex: codex.version, node: node.version },
+    paths: { claude: claude.path, codex: codex.path, node: node.path, ima2: ima2.path },
+    versions: { claude: claude.version, codex: codex.version, node: node.version, ima2: ima2.version },
     claudeInstallUrl: 'https://code.claude.com/docs/en/quickstart',
     nodeInstallUrl: 'https://nodejs.org/',
   };
@@ -141,4 +147,14 @@ async function registerCodexMcp(onLine) {
   }
 }
 
-module.exports = { checkEnvironment, installSkills, installCodexCli, codexOAuthLogin, registerCodexMcp, payloadPaths };
+async function installIma2(onLine) {
+  if (resolveCmd('ima2')) return { ok: true, already: true };
+  const node = await cliVersion('node');
+  if (!node.found) {
+    return { ok: false, needNode: true, tail: 'Node.js가 없습니다 — https://nodejs.org 에서 LTS 설치 후 다시 시도하세요.' };
+  }
+  onLine && onLine('npm으로 ima2-gen 설치 중…');
+  return runCmd('npm', ['install', '-g', 'ima2-gen'], onLine, { timeoutMs: 300000 });
+}
+
+module.exports = { checkEnvironment, installSkills, installCodexCli, codexOAuthLogin, registerCodexMcp, installIma2, payloadPaths };

@@ -75,6 +75,7 @@ python3 ~/.claude/skills/ad-storyboard/scripts/normalize_storyboard_contract.py 
 - 당신은 **이미지를 생성하지 않습니다.** 이 에이전트에는 이미지 생성 도구(Nano Banana `mcp__nanobanana__generate_image`)가 없으며, 있어도 쓰지 않습니다 — 렌더링은 creative-designer의 일입니다.
 - 검증을 통과한 계약의 비트별 `image_prompt_block`(subject / context / composition / lighting / mood / negative)을 **디렉터 보고에 그대로 담아 반환**합니다. 디렉터가 이를 creative-designer에게 전달하고, creative-designer가 `/social-creative-designer`와 `sop/creative-designer/image-qa.md` QA를 거쳐 렌더링합니다.
 - 릴스 레인에서도 마찬가지입니다: 대본에 프레임/썸네일용 시각 지시가 필요하면 프롬프트 텍스트로만 작성해 핸드백하고, 생성은 하지 않습니다.
+- **예외 — 영상 실행 레인 (ima2 + Grok OAuth, 디렉터의 명시적 "실행" 지시가 있을 때만):** `ima2 --version`과 `ima2 grok status`가 정상이면 승인된 대본의 CLIP PLAN을 실제 영상으로 실행할 수 있습니다. 절차는 `sop/creative-designer/ima2-render.md`의 "영상 실행" 절: 클립별 `ima2 video "<프롬프트>" --duration <초> --ref <키프레임>` → 클립 체인은 `ima2 video continue --video <직전.mp4>` → 루프 검증은 `ima2 video frame`으로 첫/끝 프레임 비교. 산출 mp4는 `outputs/videos/`에 저장하고 선적 게이트 3종을 실행 결과물에도 적용합니다. 키프레임 **이미지**가 필요하면 여전히 creative-designer에 핸드백합니다 — 이 예외는 영상(`ima2 video`)에만 해당합니다.
 
 ---
 

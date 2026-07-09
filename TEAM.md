@@ -1,12 +1,12 @@
 ---
 title: Social AI Team - Korean Team Manual
 version: 1.0.0
-description: Korean operations manual for the full Social AI Team system. Covers the team roster (1 director skill, 4 subagents, 5 new skills, 1 SOP layered over the 10 untouched original skills), the monthly production loop, format-to-lane routing, human approval gates, the bilingual contract boundary, MCP requirements, known contract-drift notes, installation, and the deferred roadmap.
+description: Korean operations manual for the full Social AI Team system. Covers the team roster (1 director skill, 4 subagents, 5 new skills + 1 vendored ima2 skill, render-lane SOPs layered over the 10 untouched original skills), the monthly production loop, format-to-lane routing, human approval gates, the bilingual contract boundary, MCP requirements, known contract-drift notes, installation, and the deferred roadmap.
 ---
 
 # Social AI Team — 팀 운영 매뉴얼 (한국어판)
 
-이 문서는 Social AI Team 시스템 전체의 **팀 매뉴얼**입니다. 기존 10개 스킬(영어) 위에 한국어 팀 레이어 — 디렉터 스킬 1개, 서브에이전트 4개, 신규 스킬 5개, SOP 1개 — 를 얹은 구조를 설명합니다.
+이 문서는 Social AI Team 시스템 전체의 **팀 매뉴얼**입니다. 기존 10개 스킬(영어) 위에 한국어 팀 레이어 — 디렉터 스킬 1개, 서브에이전트 4개, 신규 스킬 5개 + 벤더 스킬 1개(`/ima2`), 렌더 레인 SOP — 를 얹은 구조를 설명합니다.
 
 > **팀 모토: "한국어로 말하고, 영어로 계약한다."**
 > 운영자와의 모든 대화·요약·승인 요청은 한국어. 파일로 오가는 계약 필드(`VISUAL DIRECTION`, `BLOTATO FLAG`, `PASS`/`WARN`/`BLOCK`, `context/*.md`, `outputs/` 폴더 규약)는 기존 스킬이 정의한 영어 표기를 한 글자도 바꾸지 않습니다.
@@ -29,6 +29,7 @@ description: Korean operations manual for the full Social AI Team system. Covers
 | | `/kr-guardrail-check` | `skills/kr-guardrail-check/` | 표시광고법·AI권리·고지 의무 + 기계적 계약 검증 → `outputs/compliance/` |
 | | `/kr-voice-localizer` | `skills/kr-voice-localizer/` | 보이스 프로파일 인테이크(`context/kr-voice-profile.md`) + 톤 QA |
 | | `/naver-blog-writer` | `skills/naver-blog-writer/` | 네이버 블로그 검색 유입형 장문 글 — 키워드 제목, 소제목·이미지 슬롯 구조, 대가성 고지 → `outputs/naver/` (**수동 발행** — Blotato 미지원) |
+| **벤더 스킬 (1)** | `/ima2` | `skills/ima2/` | [ima2-gen](https://github.com/lidge-jun/ima2-gen) 번들 스킬 원문(무수정 벤더링) — 로컬 이미지·영상 생성 스튜디오의 CLI 규약. ChatGPT/Grok OAuth, API 키 불요. 렌더 레인 사용법은 `sop/creative-designer/ima2-render.md` |
 | **SOP (1)** | 이미지 QA | `sop/creative-designer/image-qa.md` | 텍스트 세이프 규칙, 이중 채점, 재생성 루프 상한 — 기존 `/social-creative-designer` Phase 0의 `sop/creative-designer/` 훅으로 자동 로드 |
 | **기존 스킬 (10)** | `/social-media-manager`, `/brand-onboarding`, `/content-calendar`, `/caption-writer`, `/social-creative-designer`, `/linkedin-writer`, `/threads-writer`, `/x-writer`, `/publisher`, `/social-performance-review` | `skills/` | **무수정.** 디렉터가 인라인 실행하거나 에이전트가 그대로 따름 |
 
@@ -177,8 +178,9 @@ For manual publishing, use the Monthly Handoff Summary from /social-media-manage
 
 | MCP | 필수 여부 | 사용처 | 없을 때 (베이스라인 모드) |
 |---|---|---|---|
-| **Nano Banana** | 비주얼 제작 1순위 | `creative-designer` (`/social-creative-designer`), 스토리보드 키프레임, 스톱모션 — Composite/Brand/Stop-Motion은 이 경로 전용 | 2순위 Codex 렌더 레인으로 폴백 (아래) |
-| **Codex 렌더 레인** (MCP 아님 — CLI) | 선택 (Nano Banana 부재 시 2순위) | `creative-designer` — `sop/creative-designer/scripts/codex_render.sh` (Codex CLI + OpenAI Images API `gpt-image-1`). **Generate 모드·키프레임 전용.** `OPENAI_API_KEY` 환경 secret 또는 `codex login` 필요 | 브리프 온리 (텍스트 프롬프트 스펙만 산출) |
+| **Nano Banana** | 비주얼 제작 1순위 | `creative-designer` (`/social-creative-designer`), 스토리보드 키프레임, 스톱모션 — Composite/Brand/Stop-Motion은 이 경로 전용 | 2순위 ima2 → 3순위 Codex로 폴백 (아래) |
+| **ima2 렌더 레인** (MCP 아님 — CLI) | 선택 (이미지 2순위 + **영상 실행**) | `creative-designer` — `ima2 gen`/`edit` (레퍼런스 ≤5, I2I 편집); `video-producer` — `ima2 video`/`video continue`로 릴스 CLIP PLAN 실제 실행. ChatGPT OAuth(이미지, 무료)/Grok OAuth(+영상), **API 키 불요**. `sop/creative-designer/ima2-render.md` | 다음 순위로 폴백 |
+| **Codex 렌더 레인** (MCP 아님 — CLI) | 선택 (이미지 3순위) | `creative-designer` — `sop/creative-designer/scripts/codex_render.sh` (Codex CLI + OpenAI Images API `gpt-image-1`). **Generate 모드·키프레임 전용.** `OPENAI_API_KEY` 환경 secret 또는 `codex login` 필요 | 브리프 온리 (텍스트 프롬프트 스펙만 산출) |
 | **Blotato** | 퍼블리싱 시 **필수** | `/publisher` (`mcp__claude_ai_Blotato__blotato_*`) | 하드스톱 (섹션 4) → 수동 발행 핸드오프 |
 | **Playwright** | 선택 | `/brand-onboarding` (웹사이트·인스타그램 증거 수집) | 운영자 인터뷰로 대체 |
 | **Firecrawl** | 선택 | `/content-calendar`, `/caption-writer`, `/linkedin-writer`, `/x-writer`, `/social-performance-review`, copywriter (경쟁사 리서치) | 리서치 생략, 브랜드 컨텍스트만으로 진행 |
@@ -202,7 +204,7 @@ For manual publishing, use the Monthly Handoff Summary from /social-media-manage
 bash install.sh
 ```
 
-- **스킬 16종** → `~/.claude/skills/` (기존 10 + content-director, reels-script, ad-storyboard, kr-guardrail-check, kr-voice-localizer, naver-blog-writer)
+- **스킬 17종** → `~/.claude/skills/` (기존 10 + content-director, reels-script, ad-storyboard, kr-guardrail-check, kr-voice-localizer, naver-blog-writer, ima2)
 - **에이전트 4종** → `~/.claude/agents/` (copywriter, creative-designer, video-producer, compliance-reviewer)
 - Windows는 `install.bat`.
 
@@ -228,10 +230,9 @@ mkdir my-client && cd my-client
 
 | 항목 | 내용 | 전제 |
 |---|---|---|
-| **Runway / Seedance 실행 연동** | 현재 `/reels-script`는 엔진용 프롬프트 스펙을 **텍스트 산출물**로만 제공 (MCP를 발명하지 않는다는 원칙). 해당 MCP가 실제로 생기면 실행 연동 | 공식 MCP 출시 시 |
 | **네이버 블로그 자동 발행** | `/naver-blog-writer`의 산출물은 현재 수동 발행. 네이버 API/MCP가 쓸 만해지면 발행 연동 | 공식 연동 수단 확보 시 |
 
-구현 완료되어 로드맵에서 졸업한 항목: **naver-blog-writer** (`skills/naver-blog-writer/`), **series-variation 풀 매트릭스** (`skills/reels-script/references/series-variation-matrix.md`).
+구현 완료되어 로드맵에서 졸업한 항목: **naver-blog-writer** (`skills/naver-blog-writer/`), **series-variation 풀 매트릭스** (`skills/reels-script/references/series-variation-matrix.md`), **영상 엔진 실행 연동** (Runway/Seedance MCP 대기 대신 **ima2 + Grok video**로 확보 — `/reels-script`의 CLIP PLAN을 `ima2 video`/`video continue`로 실제 실행).
 
 ---
 
