@@ -62,6 +62,24 @@ contextBridge.exposeInMainWorld('api', {
   hist: {
     list: (dir) => ipcRenderer.invoke('hist:list', dir),
   },
+  render: {
+    providers: (envHint) => ipcRenderer.invoke('render:providers', envHint),
+    generate: (dir, job) => ipcRenderer.invoke('render:generate', dir, job),
+  },
+  sec: {
+    get: (ns) => ipcRenderer.invoke('sec:get', ns),
+    set: (ns, values) => ipcRenderer.invoke('sec:set', ns, values),
+    invalidateChannels: () => ipcRenderer.invoke('sec:invalidateChannels'),
+  },
+  pub2: {
+    draft: (dir, lane, topic) => ipcRenderer.invoke('pub2:draft', dir, lane, topic),
+    status: () => ipcRenderer.invoke('pub2:status'),
+    publishNow: (dir, payload) => ipcRenderer.invoke('pub2:publishNow', dir, payload),
+    schedule: (dir, payload) => ipcRenderer.invoke('pub2:schedule', dir, payload),
+    queue: (dir) => ipcRenderer.invoke('pub2:queue', dir),
+    cancel: (dir, qid) => ipcRenderer.invoke('pub2:cancel', dir, qid),
+    test: (channel) => ipcRenderer.invoke('pub2:test', channel),
+  },
   update: {
     version: () => ipcRenderer.invoke('update:version'),
     check: () => ipcRenderer.invoke('update:check'),

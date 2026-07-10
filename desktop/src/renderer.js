@@ -301,14 +301,26 @@ function renderChannels() {
     tile.style.color = color;
     $('.cc-name', el).textContent = CH_NAME[ch.key] || ch.key;
     const badge = $('.cc-badge', el);
+    const direct = (S.channels && S.channels.direct && S.channels.direct[ch.key]) || {};
     if (ch.publishRoute === 'manual') {
       badge.textContent = '수동 발행'; badge.style.cursor = 'pointer'; badge.style.color = 'var(--warn)';
       badge.title = '수동 발행 체크리스트 열기';
       badge.onclick = (e) => { e.stopPropagation(); openPublishPanel(ch.key); };
       pressable(badge);
+    } else if (direct.connected) {
+      badge.textContent = 'API 연결됨'; badge.style.color = 'var(--ok)'; badge.style.cursor = 'pointer';
+      badge.title = '발행 패널 열기';
+      badge.onclick = (e) => { e.stopPropagation(); openPublishPanel(ch.key); };
+      pressable(badge);
+    } else if (S.blotato) {
+      badge.textContent = 'Blotato(레거시)'; badge.style.color = 'var(--muted)';
+    } else {
+      badge.textContent = '연결 필요'; badge.style.color = 'var(--warn)'; badge.style.cursor = 'pointer';
+      badge.title = '설정 → 채널에서 API 토큰 연결';
+      badge.onclick = (e) => { e.stopPropagation(); openSettings('channels'); };
+      pressable(badge);
+      el.classList.add('unplugged');
     }
-    else if (S.blotato) { badge.textContent = 'Blotato 자동'; badge.style.color = 'var(--ok)'; }
-    else { badge.textContent = '연결 필요'; badge.style.color = 'var(--warn)'; el.classList.add('unplugged'); }
     $('.cc-count', el).textContent = ch.posts;
     $('.cc-ready', el).textContent = `발행준비 ${ch.byStage.ready}`;
     $('.cc-meter', el).innerHTML = S.board.stages.map((s) =>
@@ -385,6 +397,8 @@ function applyBoard(b, first) {
   }
 }
 function cardId(p) { return (CH_MONO[p.channel] || '?') + '-' + p.n; }
+// 워크스페이스 미디어 직접 서빙 URL (main의 sat:// 프로토콜 — 등록 폴더 내 미디어만 허용)
+function satUrl(rel) { return 'sat://f?d=' + encodeURIComponent(S.client.dir) + '&p=' + encodeURIComponent(rel); }
 function makeCard(p) {
   const el = $('#tpl-post-card').content.firstElementChild.cloneNode(true);
   const color = `var(--ch-${p.channel})`;
@@ -395,6 +409,12 @@ function makeCard(p) {
   $('.pc-id', el).textContent = cardId(p);
   $('.pc-when', el).textContent = `${p.week || '?'}주 ${p.day || ''}`;
   $('.pc-topic', el).textContent = p.topic || '(제목 없음)';
+  if (p.thumb) { // 렌더된 실제 이미지 — 프롬프트 md가 아니라 결과물이 보드에 보인다
+    const im = $('.pc-thumb', el);
+    im.src = satUrl(p.thumb);
+    im.classList.remove('hidden');
+    im.classList.add('zoomable');
+  }
   $('.pc-format', el).textContent = p.format || '—';
   const v = $('.pc-verdict', el);
   if (p.verdict) v.classList.add(p.verdict); else v.remove();
@@ -603,11 +623,15 @@ function renderCTA() {
   else if (n.key === 'publish') {
     label.textContent = '발행 · 월말 리뷰';
     cta.onclick = (e) => {
-      if (popover(e.currentTarget, `<b>발행 단계</b><p class="muted" style="margin:6px 0">Blotato 연결 시 자동 예약, 네이버는 수동 발행입니다.</p>
+      const direct = (S.channels && S.channels.direct) || {};
+      const connected = Object.entries(direct).filter(([, v]) => v.connected).map(([k]) => CH_NAME[k] || k);
+      if (popover(e.currentTarget, `<b>발행 단계</b><p class="muted" style="margin:6px 0">${connected.length
+        ? `API 연결: ${connected.join(', ')} — 채널 카드의 배지에서 발행 패널을 여세요.`
+        : '설정 → 채널에서 API 토큰을 연결하면 앱에서 바로 발행·예약할 수 있습니다.'}<br>Instagram·네이버는 수동 체크리스트로 발행합니다.</p>
         <div style="display:flex;flex-direction:column;gap:6px">
-        <button id="pop-pub">Blotato 발행 지시 (디렉터)</button>
+        ${connected.length ? '' : '<button id="pop-connect">채널 API 연결하기</button>'}
         <button id="pop-review">월말 성과 리뷰 실행</button></div>`)) {
-        $('#pop-pub').onclick = () => { hidePopover(); prefillChat('컴플라이언스를 통과한 콘텐츠를 /publisher로 Blotato에 스케줄해줘. 네이버 건은 수동 발행 체크리스트로 정리해줘.'); };
+        const pc = $('#pop-connect'); if (pc) pc.onclick = () => { hidePopover(); openSettings('channels'); };
         $('#pop-review').onclick = () => { hidePopover(); runStage('review'); };
       }
     };
@@ -1035,13 +1059,18 @@ function openInspector(p) {
       <div class="insp-step ${i <= stageIdx ? 'done' : ''}"><b style="min-width:70px">${STAGE_LABEL[s]}</b>
       <span>${(stepFiles[s] || []).map((f) => `<a href="#" class="insp-file" data-rel="${esc(f.rel)}" style="color:var(--info)">${esc(f.name)}</a>`).join('<br>') || '<span class="muted">—</span>'}</span></div>`).join('')}
     </div>
+    ${p.thumb ? `<img class="insp-render zoomable" src="${satUrl(p.thumb)}" alt="렌더 이미지">` : ''}
+    ${p.videoThumb ? `<video class="insp-render" src="${satUrl(p.videoThumb)}" controls preload="metadata"></video>` : ''}
     <div id="insp-preview"></div>
     ${p.verdict && p.verdict !== 'PASS' ? `<div class="insp-verdict ${p.verdict}"><b>${p.verdict}</b> — 컴플라이언스 판정. 상세 사유는 검수 파일에서 확인하세요.</div>` : ''}
     <div class="insp-actions">
+      <button id="insp-render" class="accent">🎨 비주얼 생성</button>
       <button id="insp-chat">디렉터에게 지시</button>
       <button id="insp-folder">레인 폴더 열기</button>
-    </div>`;
+    </div>
+    <div id="insp-render-panel" class="hidden"></div>`;
   $('#insp-back').onclick = () => switchDock('chat');
+  $('#insp-render').onclick = () => openRenderPanel(p);
   $('#insp-chat').onclick = () => { S.chips.push({ label: cardId(p), context: `[카드 ${cardId(p)} · ${p.topic} · 현재 단계 ${STAGE_LABEL[p.stage]}]` }); renderChips(); switchDock('chat'); $('#chat-input').focus(); };
   $('#insp-folder').onclick = () => window.api.ws.openFolder(S.client.dir + '/outputs/' + p.lane);
   for (const a of $$('.insp-file', box)) a.onclick = async (e) => {
@@ -1052,20 +1081,95 @@ function openInspector(p) {
   };
 }
 
-// ---- manual publish panel (수동 발행 체크리스트 — 독 영역 사용) ------------------------------
+// ---- 비주얼 생성 패널 (인스펙터 내부) ---------------------------------------------------------
+async function openRenderPanel(p) {
+  const box = $('#insp-render-panel');
+  if (!box) return;
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="muted small">프로바이더 확인 중…</p>';
+  const av = await window.api.render.providers({ ima2: !!(S.env && S.env.ima2) });
+  if (av && av.error) { box.innerHTML = `<p class="muted small">${esc(av.error)}</p>`; return; }
+  const kind0 = p.isReel ? 'video' : 'image';
+  const opts = (kind) => Object.entries(av[kind])
+    .map(([k, v]) => `<option value="${k}" ${!v.ok ? 'disabled' : ''}>${esc(v.label)}${v.ok ? '' : ' — 설정 필요'}</option>`).join('');
+  const prefill = [p.topic, p.angle && `앵글: ${p.angle}`, p.visual && `비주얼 디렉션: ${p.visual}`, p.pillar && `필러: ${p.pillar}`]
+    .filter(Boolean).join('\n');
+  box.innerHTML = `
+    <div class="rp-head"><b>비주얼 생성 — ${cardId(p)}</b>
+      <div class="seg mini" id="rp-kind">
+        <button data-k="image" class="${kind0 === 'image' ? 'active' : ''}">이미지</button>
+        <button data-k="video" class="${kind0 === 'video' ? 'active' : ''}">영상</button>
+      </div></div>
+    <select id="rp-provider" class="rp-input">${opts(kind0)}</select>
+    <div style="display:flex;gap:8px">
+      <select id="rp-size" class="rp-input" style="flex:1">
+        <option value="square">정방형 1:1 (피드)</option>
+        <option value="portrait">세로 4:5 (피드)</option>
+        <option value="story">세로 9:16 (릴스/스토리)</option>
+        <option value="landscape">가로 16:9</option>
+      </select>
+      <select id="rp-dur" class="rp-input hidden" style="width:90px">
+        <option value="5">5초</option><option value="10">10초</option>
+      </select>
+    </div>
+    <textarea id="rp-prompt" class="rp-input" rows="4" placeholder="생성 프롬프트">${esc(prefill)}</textarea>
+    <div class="small muted" id="rp-ref">${p.thumb ? `키프레임: ${esc(p.thumb.split(/[\\/]/).pop())} 사용` : '키프레임 없음 — 영상 레인은 먼저 이미지를 생성하면 그걸 참조합니다'}</div>
+    <button id="rp-go" class="accent" style="width:100%">▶ 생성</button>
+    <p class="muted small" style="margin-top:4px">완료되면 파일이 outputs/에 저장되고 카드 썸네일로 바로 표시됩니다.</p>`;
+  const syncKind = (kind) => {
+    $('#rp-provider').innerHTML = opts(kind);
+    $('#rp-dur').classList.toggle('hidden', kind !== 'video');
+    if (kind === 'video' && p.isReel) $('#rp-size').value = 'story';
+  };
+  for (const b of $$('#rp-kind button')) b.onclick = () => {
+    $$('#rp-kind button').forEach((x) => x.classList.toggle('active', x === b));
+    syncKind(b.dataset.k);
+  };
+  if (kind0 === 'video') syncKind('video');
+  $('#rp-go').onclick = async () => {
+    const kind = $('#rp-kind button.active').dataset.k;
+    const provider = $('#rp-provider').value;
+    const prompt = $('#rp-prompt').value.trim();
+    if (!prompt) { toast('프롬프트를 입력하세요'); return; }
+    const go = $('#rp-go');
+    go.disabled = true; go.textContent = '생성 중… (로그 탭에서 진행 확인)';
+    const dir = S.client.dir;
+    try {
+      const r = await window.api.render.generate(dir, {
+        kind, provider, prompt,
+        base: `${p.chId || 'etc'}-${p.n}`,
+        size: $('#rp-size').value,
+        duration: Number($('#rp-dur').value) || 5,
+        refRel: kind === 'video' ? (p.thumb || null) : null,
+      });
+      if (r && r.ok) toast(`생성 완료 — ${r.rel.split(/[\\/]/).pop()}`);
+      else toast('생성 실패: ' + ((r && r.error) || '알 수 없음'));
+    } catch (e) { toast('생성 실패: ' + e.message); }
+    finally {
+      go.disabled = false; go.textContent = '▶ 생성';
+      if (S.client && S.client.dir === dir) refreshBoard(false);
+    }
+  };
+}
+
+// ---- publish panel (직접 API 발행 + 수동 체크리스트 — 독 영역 사용) ---------------------------
 function openPublishPanel(chKey) {
-  $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden');
+  $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden'); $('#dock-history').classList.add('hidden');
   $$('#dock-seg button').forEach((b) => b.classList.remove('active'));
   const box = $('#dock-inspector');
   box.classList.remove('hidden');
   S.inspectorN = null;
   S.publishCh = chKey; // onBoard가 보드 갱신 시 이 패널을 재구성할 수 있게
+  const direct = (S.channels && S.channels.direct && S.channels.direct[chKey]) || {};
+  const isApi = !!direct.connected;
   const posts = S.board.posts.filter((p) => p.channel === chKey);
   const ready = posts.filter((p) => p.stage === 'ready' || p.stage === 'review');
   box.innerHTML = `
     <div class="insp-head"><button class="icon-btn" id="insp-back"><svg><use href="#i-back"/></svg></button>
-      <span class="insp-topic">${esc(CH_NAME[chKey] || chKey)} 수동 발행 체크리스트</span></div>
-    <p class="muted small" style="margin-bottom:10px">본문 복사 → ${chKey === 'naver' ? '네이버 에디터' : '플랫폼 에디터'}에 붙여넣기 → 발행 후 체크. 체크 기록은 publish-log.json에 남고 카드에 '발행됨'이 표시됩니다.</p>
+      <span class="insp-topic">${esc(CH_NAME[chKey] || chKey)} 발행 ${isApi ? '<span class="chip tiny" style="color:var(--ok)">API 연결됨</span>' : '<span class="chip tiny" style="color:var(--warn)">수동</span>'}</span></div>
+    <p class="muted small" style="margin-bottom:10px">${isApi
+      ? '[발행]을 누르면 본문을 확인·수정한 뒤 바로 게시하거나 예약할 수 있습니다. 발행 기록은 publish-log.json에 남습니다.'
+      : `본문 복사 → ${chKey === 'naver' ? '네이버 에디터' : '플랫폼 에디터'}에 붙여넣기 → 발행 후 체크. ${direct.note ? esc(direct.note) : ''}`}</p>
     ${posts.length ? '' : '<p class="muted">이 채널의 포스트가 없습니다</p>'}
     ${posts.map((p) => `
       <div class="verdict-row" style="gap:8px">
@@ -1073,8 +1177,11 @@ function openPublishPanel(chKey) {
         <b>${cardId(p)}</b>
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.topic)}</span>
         ${p.stage !== 'ready' ? `<span class="chip tiny" style="color:var(--warn)">${STAGE_LABEL[p.stage]}</span>` : ''}
+        ${isApi ? `<button class="chip pub-api" data-uid="${esc(p.uid)}" style="color:var(--ok);border-color:var(--ok)">발행</button>` : ''}
         <button class="chip pub-copy" data-uid="${esc(p.uid)}">복사</button>
       </div>`).join('')}
+    <div id="pub-compose" class="hidden"></div>
+    <div id="pub-queue"></div>
     <div class="insp-actions">
       <button id="pub-folder">레인 폴더 열기</button>
       <span class="muted small" style="align-self:center">발행 대기 ${ready.filter((p) => !p.published).length}건</span>
@@ -1100,6 +1207,92 @@ function openPublishPanel(chKey) {
     if (!p) { toast('포스트를 찾을 수 없습니다'); return; }
     const r = await window.api.pub.copy(S.client.dir, p.lane, p.topic);
     toast(r.ok ? `본문 복사 완료 (${r.chars}자, ${r.file}) — 에디터에 붙여넣으세요` : '복사 실패: ' + r.error);
+  };
+  for (const btn of $$('.pub-api', box)) btn.onclick = () => {
+    const p = S.board.posts.find((x) => x.uid === btn.dataset.uid);
+    if (!p) { toast('포스트를 찾을 수 없습니다'); return; }
+    openCompose(chKey, p, direct);
+  };
+  renderPubQueue(chKey);
+}
+
+// 발행 컴포저 — 실제 게시될 본문을 운영자가 마지막으로 확인·수정하는 사람 게이트
+async function openCompose(chKey, p, direct) {
+  const box = $('#pub-compose');
+  if (!box) return;
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="muted small">본문 초안 불러오는 중…</p>';
+  const draft = await window.api.pub2.draft(S.client.dir, p.lane, p.topic);
+  const limits = { x: 280, threads: 500 };
+  const limit = limits[chKey];
+  const canImage = !!direct.image && !!p.thumb;
+  box.innerHTML = `
+    <div class="rp-head" style="margin-top:10px"><b>발행 — ${cardId(p)}</b><button class="icon-btn" id="cmp-close"><svg><use href="#i-close"/></svg></button></div>
+    <textarea id="cmp-text" class="rp-input" rows="7">${esc(draft.ok ? draft.text : '')}</textarea>
+    <div class="small muted" style="display:flex;justify-content:space-between">
+      <span id="cmp-count"></span>${limit ? `<span>제한 ${limit}자</span>` : ''}
+    </div>
+    ${!draft.ok ? `<p class="muted small" style="color:var(--warn)">초안을 찾지 못했습니다 (${esc(draft.error || '')}) — 직접 입력하세요</p>` : ''}
+    ${direct.image ? `<label class="small muted" style="display:flex;gap:6px;align-items:center;margin:4px 0">
+      <input type="checkbox" id="cmp-img" ${canImage ? 'checked' : 'disabled'}> 이미지 첨부 ${p.thumb ? `(${esc(p.thumb.split(/[\\/]/).pop())})` : '(렌더된 이미지 없음)'}
+    </label>` : `<p class="muted small">${esc(direct.imageNote || '이 채널은 텍스트만 직접 발행됩니다')}</p>`}
+    <div style="display:flex;gap:8px;margin-top:6px">
+      <button id="cmp-now" class="accent" style="flex:1">지금 발행</button>
+      <input type="datetime-local" id="cmp-when" class="rp-input" style="flex:1">
+      <button id="cmp-later">예약</button>
+    </div>`;
+  const ta = $('#cmp-text');
+  const updCount = () => {
+    const n = ta.value.length;
+    const el = $('#cmp-count');
+    if (el) { el.textContent = `${n}자`; el.style.color = limit && n > limit ? 'var(--bad)' : ''; }
+  };
+  ta.addEventListener('input', updCount); updCount();
+  $('#cmp-close').onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; };
+  const payload = () => ({
+    uid: p.uid, channel: chKey, text: ta.value,
+    imageRel: ($('#cmp-img') && $('#cmp-img').checked) ? p.thumb : null,
+  });
+  $('#cmp-now').onclick = async () => {
+    if (!ta.value.trim()) { toast('본문이 비어 있습니다'); return; }
+    const b = $('#cmp-now'); b.disabled = true; b.textContent = '발행 중…';
+    try {
+      const r = await window.api.pub2.publishNow(S.client.dir, payload());
+      if (r && r.ok) { toast(`${CH_NAME[chKey] || chKey} 발행 완료${r.url ? ' — ' + r.url : ''}`); box.classList.add('hidden'); refreshBoard(false); }
+      else toast('발행 실패: ' + ((r && r.error) || '알 수 없음'));
+    } finally { b.disabled = false; b.textContent = '지금 발행'; }
+  };
+  $('#cmp-later').onclick = async () => {
+    const when = $('#cmp-when').value;
+    if (!when) { toast('예약 시각을 선택하세요'); return; }
+    if (!ta.value.trim()) { toast('본문이 비어 있습니다'); return; }
+    const r = await window.api.pub2.schedule(S.client.dir, { ...payload(), when: new Date(when).toISOString() });
+    if (r && r.ok) { toast(`예약됨 — ${new Date(r.when).toLocaleString('ko-KR')}`); box.classList.add('hidden'); renderPubQueue(chKey); }
+    else toast('예약 실패: ' + ((r && r.error) || '알 수 없음'));
+  };
+}
+
+async function renderPubQueue(chKey) {
+  const box = $('#pub-queue');
+  if (!box) return;
+  const q = await window.api.pub2.queue(S.client.dir);
+  if (!q || q.error) { box.innerHTML = ''; return; }
+  const mine = (list) => list.filter((i) => i.channel === chKey);
+  const pend = mine(q.pending || []);
+  const past = mine(q.past || []).slice(-5).reverse();
+  if (!pend.length && !past.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div style="margin:10px 0"><b class="small">예약 큐</b>
+    ${pend.map((i) => `<div class="verdict-row" style="gap:8px"><span class="chip tiny">${new Date(i.when).toLocaleString('ko-KR')}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(i.text.slice(0, 40))}</span>
+      <button class="chip" data-qcancel="${esc(i.qid)}">취소</button></div>`).join('')}
+    ${past.map((i) => `<div class="verdict-row" style="gap:8px;opacity:.7"><span class="dot ${i.status === 'done' ? 'PASS' : 'BLOCK'}"></span>
+      <span class="chip tiny">${i.status === 'done' ? '발행됨' : (i.status === 'cancelled' ? '취소됨' : '실패')}</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((i.error || i.text || '').slice(0, 40))}</span></div>`).join('')}
+  </div>`;
+  for (const b of $$('[data-qcancel]', box)) b.onclick = async () => {
+    const r = await window.api.pub2.cancel(S.client.dir, b.dataset.qcancel);
+    toast(r && r.ok ? '예약 취소됨' : '취소 실패: ' + ((r && r.error) || ''));
+    renderPubQueue(chKey);
   };
 }
 
@@ -1185,10 +1378,18 @@ async function openSettings(section) {
   sheet.innerHTML = `
     <div class="sheet-head"><h2>설정</h2><button class="icon-btn" id="set-close"><svg><use href="#i-close"/></svg></button></div>
     <div class="settings-nav">
-      <button data-sec="env" class="active">환경</button><button data-sec="engine">엔진</button><button data-sec="update">업데이트</button><button data-sec="about">정보</button>
+      <button data-sec="env" class="active">환경</button><button data-sec="engine">엔진</button><button data-sec="channels">채널</button><button data-sec="render">렌더</button><button data-sec="update">업데이트</button><button data-sec="about">정보</button>
     </div>
     <div class="sheet-body">
       <div data-body="env">${envRows(s)}${envButtons()}</div>
+      <div data-body="channels" class="hidden">
+        <p class="muted small" style="margin-bottom:12px;line-height:1.6">각 플랫폼의 개발자 포털에서 발급한 토큰으로 <b>Blotato 없이 직접 발행</b>합니다. 값은 이 PC의 <code>~/.social-ai-team/secrets.json</code>에만 저장됩니다.<br>Instagram·네이버는 API 제약으로 수동 발행 체크리스트를 사용합니다.</p>
+        <div id="sec-forms-ch"></div>
+      </div>
+      <div data-body="render" class="hidden">
+        <p class="muted small" style="margin-bottom:12px;line-height:1.6"><b>클로드 디자인</b>(SVG→PNG) 레인은 키 없이 항상 동작합니다. 아래 키를 넣으면 이미지·영상 프로바이더가 추가로 열립니다.</p>
+        <div id="sec-forms-rd"></div>
+      </div>
       <div data-body="engine" class="hidden">
         <p class="muted" style="margin-bottom:10px">앱 내 대화·외부 터미널의 엔진을 선택합니다. 파이프라인(팀 오케스트레이션)은 항상 Claude로 동작합니다.</p>
         <div class="seg" id="set-engine"><button data-engine="claude">Claude</button><button data-engine="codex">Codex</button></div>
@@ -1249,8 +1450,80 @@ async function openSettings(section) {
   bindModel('#set-model-claude', 'claude');
   bindModel('#set-model-codex', 'codex');
   $('#set-upd-check').onclick = async () => { const r = await window.api.update.check(); $('#set-upd-status').textContent = r.ok ? '확인 중…' : r.message; };
+  // 채널 토큰 폼 (직접 발행) + 렌더 프로바이더 키 폼
+  buildSecretForms($('#sec-forms-ch', sheet), CH_SECRET_FORMS, true);
+  buildSecretForms($('#sec-forms-rd', sheet), RD_SECRET_FORMS, false);
   if (section) $(`.settings-nav button[data-sec="${section}"]`, sheet).click();
   openSheet('#sheet-settings');
+}
+
+// ---- 시크릿 폼 (채널 토큰 · 렌더 키) ---------------------------------------------------------
+const CH_SECRET_FORMS = [
+  { ns: 'x', title: 'X (Twitter)', test: 'x', hint: 'console.x.com에서 앱 생성 → Keys and tokens 4종. 텍스트+이미지 발행. 2026년부터 종량제(포스트당 $0.015)라 크레딧 충전 필요.',
+    fields: [['apiKey', 'API Key'], ['apiSecret', 'API Key Secret'], ['accessToken', 'Access Token'], ['accessSecret', 'Access Token Secret']] },
+  { ns: 'facebook', title: 'Facebook 페이지', test: 'facebook', hint: 'developers.facebook.com 앱(개발 모드로 내 페이지 발행 가능) → 장기 사용자 토큰 → /me/accounts의 페이지 토큰(만료 없음). 텍스트+이미지.',
+    fields: [['pageId', '페이지 ID'], ['pageToken', '페이지 액세스 토큰']] },
+  { ns: 'threads', title: 'Threads', test: 'threads', hint: 'Meta 앱 → Threads API 유스케이스 → 테스터 초대·수락 → 장기 토큰(60일, 50일쯤 갱신). 텍스트 발행 (이미지는 공개 URL 필수라 수동).',
+    fields: [['userId', 'Threads 사용자 ID'], ['token', '액세스 토큰']] },
+  { ns: 'linkedin', title: 'LinkedIn', test: 'linkedin', hint: '개발자 앱에 "Share on LinkedIn" 제품 추가(즉시 승인) → OAuth로 토큰(60일 만료 시 재발급). Person ID는 /v2/userinfo의 sub 값. 텍스트+이미지.',
+    fields: [['personId', 'Person ID (urn 뒷부분)'], ['token', '액세스 토큰']] },
+];
+const RD_SECRET_FORMS = [
+  { ns: 'openai', title: 'OpenAI (이미지 gpt-image-1 · 영상 Sora)', hint: 'platform.openai.com API 키 — "코덱스 이미지" 레인.',
+    fields: [['apiKey', 'API Key']] },
+  { ns: 'runway', title: 'Runway', hint: 'dev.runwayml.com 개발자 포털 키. 키프레임 이미지→영상 (gen4_turbo 기준 5초 ≈ $0.25).',
+    fields: [['apiKey', 'API Secret'], ['model', '모델 (기본 gen4_turbo)']] },
+  { ns: 'higgsfield', title: 'Higgsfield', hint: 'platform.higgsfield.ai에서 발급한 Key ID/Secret. DoP image→video.',
+    fields: [['keyId', 'Key ID'], ['keySecret', 'Key Secret'], ['model', '모델 (기본 dop-turbo)']] },
+  { ns: 'comfyui', title: 'ComfyUI (오픈소스 로컬)', hint: '로컬에 띄운 ComfyUI 주소와 API 포맷 워크플로 JSON 경로. 프롬프트 자리에 __PROMPT__ 를 넣어두면 치환됩니다.',
+    fields: [['url', 'URL (예: http://127.0.0.1:8188)'], ['workflowPath', '워크플로 JSON 파일 경로']] },
+  { ns: 'custom-video', title: '커스텀 HTTP 브릿지', hint: 'POST {prompt, image_b64?, duration} → {video_url|image_url|…_b64} 규약의 자체 엔드포인트.',
+    fields: [['url', '엔드포인트 URL'], ['headers', '추가 헤더 (JSON, 선택)']] },
+];
+function buildSecretForms(root, forms, isChannel) {
+  if (!root) return;
+  root.innerHTML = '';
+  for (const f of forms) {
+    const box = document.createElement('div');
+    box.className = 'sec-form';
+    box.innerHTML = `<div class="sec-head"><b>${esc(f.title)}</b><span class="badge no" data-secstate="${f.ns}">미설정</span></div>
+      <p class="muted small" style="margin:4px 0 8px">${esc(f.hint)}</p>
+      ${f.fields.map(([k, label]) => `<input class="rp-input" data-ns="${f.ns}" data-k="${k}" placeholder="${esc(label)}" autocomplete="off" spellcheck="false" style="margin-bottom:6px">`).join('')}
+      <div style="display:flex;gap:8px">
+        <button data-secsave="${f.ns}">저장</button>
+        ${f.test ? `<button data-sectest="${f.test}">연결 테스트</button>` : ''}
+        <span class="muted small" data-secmsg="${f.ns}" style="align-self:center"></span>
+      </div>`;
+    root.appendChild(box);
+    // 기존 값은 마스킹된 placeholder로만 보여준다 — 원문은 렌더러로 오지 않는다
+    window.api.sec.get(f.ns).then((masked) => {
+      if (masked && !masked.error) {
+        const anySet = Object.keys(masked).length > 0;
+        const badge = $(`[data-secstate="${f.ns}"]`, box);
+        if (anySet && badge) { badge.className = 'badge ok'; badge.textContent = '설정됨'; }
+        for (const inp of $$(`input[data-ns="${f.ns}"]`, box)) if (masked[inp.dataset.k]) inp.placeholder = `${inp.placeholder} — 저장됨: ${masked[inp.dataset.k]}`;
+      }
+    });
+    $(`[data-secsave="${f.ns}"]`, box).onclick = async () => {
+      const values = {};
+      for (const inp of $$(`input[data-ns="${f.ns}"]`, box)) if (inp.value.trim()) values[inp.dataset.k] = inp.value.trim();
+      if (!Object.keys(values).length) { toast('입력된 값이 없습니다'); return; }
+      const r = await window.api.sec.set(f.ns, values);
+      if (r && r.error) { toast('저장 실패: ' + r.error); return; }
+      for (const inp of $$(`input[data-ns="${f.ns}"]`, box)) inp.value = '';
+      const badge = $(`[data-secstate="${f.ns}"]`, box);
+      if (badge) { badge.className = 'badge ok'; badge.textContent = '설정됨'; }
+      toast(`${f.title} 저장됨`);
+      if (isChannel) { await window.api.sec.invalidateChannels(); S.channels = await window.api.channels.check(); S.blotato = !!S.channels.blotato; renderChannels(); }
+    };
+    const tb = f.test && $(`[data-sectest="${f.test}"]`, box);
+    if (tb) tb.onclick = async () => {
+      const msg = $(`[data-secmsg="${f.ns}"]`, box);
+      msg.textContent = '테스트 중…';
+      const r = await window.api.pub2.test(f.test);
+      msg.textContent = r && r.ok ? `✔ 연결됨${r.detail ? ' (' + r.detail + ')' : ''}` : `✖ ${(r && r.error) || '실패'}`;
+    };
+  }
 }
 async function refreshEnvBadges(root) {
   const s = S.env = await window.api.setup.check();
@@ -1326,7 +1599,9 @@ window.api.onBoard((payload) => {
       if (p) openInspector(p);
     }
     if (S.publishCh && !$('#dock-inspector').classList.contains('hidden')) {
-      openPublishPanel(S.publishCh);
+      // 발행 본문을 작성 중이면 재구성하지 않는다 — 편집 내용이 날아가면 안 된다
+      const cmp = $('#pub-compose');
+      if (!cmp || cmp.classList.contains('hidden')) openPublishPanel(S.publishCh);
     }
   });
 });
@@ -1363,7 +1638,7 @@ $('#channel-scroll').addEventListener('scroll', redrawWire);
   // 초기화 단계별로 실패를 격리 — 하나가 죽어도 앱이 백지가 되지 않게
   try { S.engine = await window.api.engine.get(); S.models = await window.api.engine.getModels(); applyEngine(); }
   catch (e) { reportError('boot-engine', e.message); }
-  try { S.blotato = (await window.api.channels.check()).blotato; }
+  try { S.channels = await window.api.channels.check(); S.blotato = !!S.channels.blotato; }
   catch (e) { reportError('boot-channels', e.message); }
   try {
     await refreshClients();

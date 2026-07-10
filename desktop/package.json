@@ -1,7 +1,7 @@
 {
   "name": "social-ai-team-desktop",
   "productName": "Social AI Team",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Desktop control tower for the Social AI Team — installs the skills, authenticates Codex, and drives the content pipeline per client.",
   "main": "main.js",
   "author": "contentscoin",

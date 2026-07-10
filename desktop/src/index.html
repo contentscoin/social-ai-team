@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: sat:; media-src sat:; style-src 'self' 'unsafe-inline'" />
   <title>Social AI Team — 온에어 데스크</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -132,6 +132,7 @@
   <!-- ══ 템플릿 ══ -->
   <template id="tpl-post-card">
     <article class="post-card" draggable="true">
+      <img class="pc-thumb hidden" alt="" loading="lazy">
       <div class="pc-row1"><span class="mono-tile"></span><span class="pc-id"></span><span class="pc-when chip tiny"></span></div>
       <div class="pc-topic"></div>
       <div class="pc-row3"><span class="pc-format chip tiny"></span><span class="pc-verdict dot"></span><span class="pc-dots"></span></div>

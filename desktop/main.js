@@ -1,5 +1,5 @@
 // Social AI Team Desktop — Electron main process
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Notification, protocol } = require('electron');
 const path = require('path');
 const setup = require('./lib/setup');
 const workspace = require('./lib/workspace');
@@ -17,6 +17,9 @@ const history = require('./lib/history');
 const chatlog = require('./lib/chatlog');
 const autopilot = require('./lib/autopilot');
 const proc = require('./lib/proc');
+const secrets = require('./lib/secrets');
+const render = require('./lib/render');
+const pubdirect = require('./lib/pubdirect');
 
 // 중복 실행 방지 — 두 인스턴스가 settings/gates/clients.json을 서로 밟는다
 if (!app.requestSingleInstanceLock()) {
@@ -101,9 +104,23 @@ function createWindow() {
 
 app.whenReady().then(() => {
   applog.write('boot', `v${app.getVersion()} ${process.platform}/${process.arch} electron ${process.versions.electron}`);
+  // sat:// — 워크스페이스 이미지/영상을 렌더러 <img>/<video>로 직접 서빙 (IPC dataURL보다 훨씬 가볍다).
+  // 등록된 클라이언트 폴더 내부의 미디어 파일만 허용.
+  protocol.registerFileProtocol('sat', (req, cb) => {
+    try {
+      const u = new URL(req.url);
+      const dir = decodeURIComponent(u.searchParams.get('d') || '');
+      const rel = decodeURIComponent(u.searchParams.get('p') || '');
+      const known = workspace.listClients().some((c) => c.dir === dir);
+      const abs = path.resolve(dir, rel);
+      if (!known || !abs.startsWith(path.resolve(dir) + path.sep) || !/\.(png|jpe?g|webp|gif|mp4|webm)$/i.test(abs)) { cb({ error: -10 }); return; }
+      cb({ path: abs });
+    } catch { cb({ error: -2 }); }
+  });
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   initAutoUpdate();
+  pubdirect.startScheduler({ send, notify, pushBoard: () => pushBoard() });
 }).catch((e) => {
   applog.write('boot-fail', (e && e.stack) || String(e));
   try { dialog.showErrorBox('Social AI Team 시작 실패', String(e && e.message || e)); } catch { /* headless */ }
@@ -280,10 +297,10 @@ ipcMain.handle('pub:mark', safe((_e, dir, uid, on) => {
   setTimeout(pushBoard, 200);
   return { ok: true, ...r };
 }));
-// 레인의 모든 텍스트 파일을 스캔해 해당 포스트의 블록을 찾아 클립보드에 복사.
+// 레인의 모든 텍스트 파일을 스캔해 해당 포스트의 블록을 찾는다 (복사·직접 발행 초안 공용).
 // 종료 앵커는 시작과 동종(POST/ID/1레벨 헤딩)만 — 본문 내부의 ##·---에서 끊기지 않는다.
 const normText = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-ipcMain.handle('pub:copy', safe((_e, dir, lane, topic) => {
+function findPostBlock(dir, lane, topic) {
   const laneDir = path.resolve(dir, 'outputs', lane);
   if (!laneDir.startsWith(path.resolve(dir) + path.sep)) return { ok: false, error: 'path escape' };
   const t = normText(topic).slice(0, 24);
@@ -297,20 +314,45 @@ ipcMain.handle('pub:copy', safe((_e, dir, lane, topic) => {
     anchors.push(text.length);
     for (let i = 0; i < anchors.length - 1; i++) {
       const block = text.slice(anchors[i], anchors[i + 1]);
-      if (normText(block).includes(t)) {
-        clipboard.writeText(block.trim());
-        return { ok: true, chars: block.trim().length, file: f };
-      }
+      if (normText(block).includes(t)) return { ok: true, text: block.trim(), file: f };
     }
     // 앵커가 없는 단일 포스트 파일: 파일 전체가 토픽을 담으면 통째로
     if (!anchors.length || anchors[0] === text.length) {
-      if (normText(text).includes(t)) { clipboard.writeText(text.trim()); return { ok: true, chars: text.trim().length, file: f }; }
+      if (normText(text).includes(t)) return { ok: true, text: text.trim(), file: f };
     }
   }
   return { ok: false, error: '해당 포스트의 산출 파일을 찾지 못했습니다 — 카피가 생성됐는지 확인하세요' };
+}
+ipcMain.handle('pub:copy', safe((_e, dir, lane, topic) => {
+  const r = findPostBlock(dir, lane, topic);
+  if (!r.ok) return r;
+  clipboard.writeText(r.text);
+  return { ok: true, chars: r.text.length, file: r.file };
 }));
 
-// ---- Channel connection check (Blotato MCP presence) ----------------------------
+// ---- 직접 발행 (Blotato 대체) ------------------------------------------------------
+// 발행 초안 — 블록에서 계약 필드(VISUAL DIRECTION 등)를 걷어내 실제 게시 본문만 남긴다.
+// 운영자가 발행 전에 textarea에서 최종 확인·수정한다 (사람 게이트).
+const CONTRACT_LINE = /^\s*(?:\*\*)?(VISUAL DIRECTION|BLOTATO FLAG|INFOGRAPHIC|PASS|WARN|BLOCK|Char count|글자수|문자수)\b.*$/gim;
+ipcMain.handle('pub2:draft', safe((_e, dir, lane, topic) => {
+  const r = findPostBlock(dir, lane, topic);
+  if (!r.ok) return r;
+  const cleaned = r.text.replace(CONTRACT_LINE, '').replace(/\n{3,}/g, '\n\n').trim();
+  return { ok: true, text: cleaned, file: r.file };
+}));
+ipcMain.handle('pub2:status', safe(() => pubdirect.status()));
+ipcMain.handle('pub2:publishNow', safe(async (_e, dir, payload) => {
+  const r = await pubdirect.publishNow(dir, payload);
+  if (r.ok) { send('log', { source: 'publish', line: `✔ ${payload.channel} 발행 — ${r.url || r.id || 'ok'}`, dir }); setTimeout(pushBoard, 300); }
+  else send('log', { source: 'publish', line: `✖ ${payload.channel} 발행 실패 — ${r.error}`, dir });
+  return r;
+}));
+ipcMain.handle('pub2:schedule', safe((_e, dir, payload) => pubdirect.schedule(dir, payload)));
+ipcMain.handle('pub2:queue', safe((_e, dir) => pubdirect.listQueue(dir)));
+ipcMain.handle('pub2:cancel', safe((_e, dir, qid) => pubdirect.cancel(dir, qid)));
+ipcMain.handle('pub2:test', safe((_e, channel) => pubdirect.test(channel)));
+
+// ---- Channel connection check (직접 발행 토큰 + 레거시 Blotato MCP) -----------------
 let channelCache = { at: 0, data: null };
 ipcMain.handle('channels:check', () => {
   if (channelCache.data && Date.now() - channelCache.at < 10 * 60 * 1000) return channelCache.data;
@@ -319,9 +361,11 @@ ipcMain.handle('channels:check', () => {
     const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8'));
     blotato = Object.keys(cfg.mcpServers || {}).some((k) => /blotato/i.test(k));
   } catch { /* no config */ }
-  channelCache = { at: Date.now(), data: { blotato } };
+  channelCache = { at: Date.now(), data: { blotato, direct: pubdirect.status() } };
   return channelCache.data;
 });
+// 토큰 저장 시 채널 캐시 무효화 — 배지가 바로 갱신되게
+ipcMain.handle('sec:invalidateChannels', () => { channelCache = { at: 0, data: null }; return { ok: true }; });
 
 // ---- Pipeline stages -------------------------------------------------------
 // 공용 실행기 — 수동 실행(pipe:runStage)과 오토파일럿이 같은 계측(이벤트/기록/알림)을 쓴다.
@@ -390,6 +434,41 @@ ipcMain.handle('auto:status', () => autopilot.status());
 
 // ---- 실행 기록 ----------------------------------------------------------------
 ipcMain.handle('hist:list', safe((_e, dir) => history.forDir(dir)));
+
+// ---- 인앱 렌더 엔진 (이미지/영상 실물 생성) ----------------------------------------
+const renderInFlight = new Set();
+ipcMain.handle('render:providers', safe((_e, envHint) => render.availability(envHint || {})));
+ipcMain.handle('render:generate', async (_e, dir, job) => {
+  const key = `${dir}::${job && job.base}`;
+  if (renderInFlight.has(key)) return { ok: false, error: '이 카드의 렌더가 이미 진행 중입니다' };
+  renderInFlight.add(key);
+  const startedAt = Date.now();
+  try {
+    // refAbs 검증 — 워크스페이스 밖 파일 참조 차단
+    if (job && job.refRel) {
+      const abs = path.resolve(dir, job.refRel);
+      if (!abs.startsWith(path.resolve(dir) + path.sep) || !fs.existsSync(abs)) return { ok: false, error: '참조 이미지를 찾을 수 없습니다' };
+      job.refAbs = abs;
+    }
+    const r = await render.generate(dir, job, (line) => send('log', { source: 'render', line, dir }));
+    history.append({
+      dir, kind: 'stage', stage: `render-${job.kind}`, engine: job.provider, model: '',
+      ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: (job.prompt || '').slice(0, 60),
+    });
+    if (r.ok) {
+      send('log', { source: 'render', line: `✔ ${r.rel}`, dir });
+      if (Date.now() - startedAt > 30_000) notify('렌더 완료', r.rel);
+      setTimeout(pushBoard, 300); // 새 파일 → 카드 썸네일 즉시 반영
+    }
+    return r;
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  } finally { renderInFlight.delete(key); }
+});
+
+// ---- 시크릿 (채널 토큰·렌더 키) ---------------------------------------------------
+ipcMain.handle('sec:get', safe((_e, ns) => secrets.masked(ns)));
+ipcMain.handle('sec:set', safe((_e, ns, values) => secrets.set(ns, values)));
 
 // ---- Engine + in-app director chat -----------------------------------------
 ipcMain.handle('cfg:getEngine', safe(() => config.getEngine()));

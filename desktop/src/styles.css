@@ -277,6 +277,17 @@ button:disabled { opacity:.4; cursor:default; }
   #dock { width:320px; min-width:280px; }
   #toasts { right:340px; }
 }
+/* 렌더 결과 표시 */
+.pc-thumb { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; margin-bottom:8px; cursor:zoom-in; background:var(--raised); }
+.insp-render { width:100%; border-radius:10px; margin:10px 0; background:var(--raised); }
+img.insp-render { cursor:zoom-in; }
+/* 비주얼 생성 패널 */
+#insp-render-panel { display:flex; flex-direction:column; gap:8px; margin-top:12px; padding:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; }
+.rp-head { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; }
+.rp-input { background:var(--raised); border:1px solid var(--line); border-radius:8px; padding:7px 9px; color:var(--text); font-size:12px; font-family:inherit; width:100%; }
+button.accent { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:8px 12px; }
+button.accent:disabled { opacity:.6; }
+
 /* 포커스 가시성 — 키보드 조작 대상 */
 .post-card:focus-visible, .channel-card:focus-visible, .gate-node:focus-visible, .avatar:focus-visible,
 .file-row:focus-visible, .stamp-btn:focus-visible, .cc-badge:focus-visible {

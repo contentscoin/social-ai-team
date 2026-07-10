@@ -80,15 +80,17 @@ function topicIn(haystackNorm, topic) {
 }
 
 // ---- calendar parsing ----------------------------------------------------------
+// 필드 라인 — "- Format: reel"/"* **Format**: reel"처럼 리스트 마커·볼드 장식이 붙어도 잡는다
+const F = (name) => new RegExp(`^\\s*(?:[-*•]\\s*)?(?:\\*\\*)?${name}(?:\\*\\*)?\\s*[:：]\\s*(.+)$`, 'im');
 const FIELD_RE = {
-  platform: /^Platform:\s*(.+)$/im,
-  pillar: /^Pillar:\s*(.+)$/im,
-  format: /^Format:\s*(.+)$/im,
-  objective: /^Objective:\s*(.+)$/im,
-  topic: /^Topic:\s*(.+)$/im,
-  angle: /^Angle:\s*(.+)$/im,
-  visual: /^Visual direction:\s*(.+)$/im,
-  notes: /^Notes:\s*(.+)$/im,
+  platform: F('(?:Platform|플랫폼|채널)'),
+  pillar: F('(?:Pillar|필러)'),
+  format: F('(?:Format|형식|포맷)'),
+  objective: F('(?:Objective|목표)'),
+  topic: F('(?:Topic|주제|토픽)'),
+  angle: F('(?:Angle|앵글)'),
+  visual: F('(?:Visual direction|Visual|비주얼(?:\\s*디렉션)?)'),
+  notes: F('(?:Notes|노트|비고)'),
 };
 
 function parsePostBlock(n, header, block) {
@@ -111,14 +113,20 @@ function parsePostBlock(n, header, block) {
     if (fmt) post.format = fmt;
   }
   if (!post.topic) {
-    const tm = header.match(/^(?:POST\s*\d+|[A-Z]{1,2}-\d+)\s*[—:–-]\s*(.+)$/i);
-    if (tm) post.topic = tm[1].split(/\s+—\s+/)[0].trim();
+    // 구분자(—/:)는 선택 — "IG-1 홈카페 라떼 아트"처럼 공백만 있는 헤더도 토픽으로 잡는다
+    const tm = header.match(/^(?:POST\s*\d+|[A-Z]{1,2}-\d+)\s*[—:–-]?\s*(.+)$/i);
+    if (tm) {
+      const t = tm[1].split(/\s+—\s+/)[0].replace(/^Week\s*\d+[,\s]*/i, '').trim();
+      if (t) post.topic = t;
+    }
   }
   post.headerRaw = header;
   return post;
 }
 
 const ID_PLATFORM = { IG: 'Instagram', FB: 'Facebook', LI: 'LinkedIn', LN: 'LinkedIn', IN: 'LinkedIn', TH: 'Threads', X: 'X', NV: 'Naver Blog', NB: 'Naver Blog', TT: 'TikTok' };
+// 렌더 엔진의 파일명 프리픽스 (render.js와 계약: `${chId}-${n}.png` → 카드 자동 매칭)
+const CH_ID = { instagram: 'ig', facebook: 'fb', linkedin: 'li', threads: 'th', x: 'x', naver: 'nv', tiktok: 'tt', etc: 'etc' };
 function parseCalendar(md) {
   const posts = [];
   // 앵커 두 형태: "POST 12 …" 또는 채널-ID "IG-4 …" (헤딩/볼드 장식 허용)
@@ -279,9 +287,14 @@ function buildBoard(dir) {
     const lane = laneOf(post.platform);
     const isReel = /reel|video|영상|릴스|shorts|tiktok/i.test(post.format + ' ' + (post.headerRaw || ''));
     const copyDone = topicIn(lanes[lane].norm, post.topic);
+    // 렌더 엔진 산출물 — `${chId}-${n}` 프리픽스 파일명으로 이 포스트에 직접 매칭
+    const chId = CH_ID[channelKey(post.platform)] || 'etc';
+    const rendPrefix = new RegExp(`^${chId}-0*${post.n}(?![0-9])`, 'i');
+    const renders = (lanes.creatives.files || []).filter((f) => rendPrefix.test(f.name) && /\.(png|jpe?g|webp)$/i.test(f.name));
+    const videoRenders = (lanes.videos.files || []).filter((f) => rendPrefix.test(f.name) && /\.(mp4|webm|mov)$/i.test(f.name));
     const visualDone = isReel
-      ? topicIn(lanes.videos.norm, post.topic) || topicIn(lanes.storyboards.norm, post.topic)
-      : lanes.creatives.files.length > 0 && topicIn(norm(lanes.creatives.text), post.topic);
+      ? videoRenders.length > 0 || topicIn(lanes.videos.norm, post.topic) || topicIn(lanes.storyboards.norm, post.topic)
+      : renders.length > 0 || (lanes.creatives.files.length > 0 && topicIn(norm(lanes.creatives.text), post.topic));
     const verdict = verdictFor(lanes.compliance.text, { ...post, lane });
 
     let stage = 'planned';
@@ -298,10 +311,18 @@ function buildBoard(dir) {
       .map((pf) => ({ rel: pf.rel, kind }));
     const files = [...matchFiles(lanes[lane], 'copy', 2)];
     if (isReel) files.push(...matchFiles(lanes.videos, 'video', 1), ...matchFiles(lanes.storyboards, 'board', 1));
+    files.push(...renders.slice(0, 3).map((f) => ({ rel: f.rel, kind: 'render' })));
+    files.push(...videoRenders.slice(0, 2).map((f) => ({ rel: f.rel, kind: 'videorender' })));
     files.push(...matchFiles(lanes.creatives, 'creative', 2));
     if (verdict && (lanes.compliance.perFile || []).length) files.push({ rel: lanes.compliance.perFile[0].rel, kind: 'verdict' });
 
-    return { ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform), files };
+    return {
+      ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform), files,
+      // 카드 썸네일 — 최신 렌더 이미지 (fs.watch가 생성 즉시 반영)
+      thumb: renders[0] ? renders[0].rel : null,
+      videoThumb: videoRenders[0] ? videoRenders[0].rel : null,
+      chId,
+    };
   });
   // 채널-ID 캘린더는 IG-1과 TH-1처럼 번호가 겹친다 — 카드 식별은 uid로
   const seenUid = new Set();
@@ -327,7 +348,8 @@ function buildBoard(dir) {
     channels[k] = channels[k] || {
       key: k, posts: 0, byStage: { planned: 0, copy: 0, visual: 0, review: 0, ready: 0 },
       warn: 0, block: 0, lane: c.lane,
-      publishRoute: k === 'naver' ? 'manual' : 'blotato',
+      // 발행 경로: 네이버/인스타그램은 API 제약으로 수동, 나머지는 직접 API(토큰 연결 시) — 렌더러가 pub2 status와 조합
+      publishRoute: (k === 'naver' || k === 'instagram') ? 'manual' : 'api',
       files: [],
     };
     channels[k].posts += 1;
