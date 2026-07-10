@@ -16,12 +16,25 @@ const applog = require('./lib/applog');
 // ---- 프로세스 레벨 오류는 파일 + 렌더러 로그로 남긴다 (조용한 죽음 금지) ----------
 process.on('uncaughtException', (e) => {
   applog.write('main-crash', (e && e.stack) || String(e));
-  try { send('log', { source: 'main-error', line: '메인 프로세스 예외: ' + (e && e.message || e) }); } catch { /* window gone */ }
+  if (win && !win.isDestroyed()) {
+    try { send('log', { source: 'main-error', line: '메인 프로세스 예외: ' + (e && e.message || e) }); } catch { /* window gone */ }
+  } else {
+    try { dialog.showErrorBox('Social AI Team — 내부 오류', String(e && e.stack || e).slice(0, 1000)); } catch { /* headless */ }
+  }
 });
 process.on('unhandledRejection', (e) => {
   applog.write('main-rejection', (e && e.stack) || String(e));
   try { send('log', { source: 'main-error', line: '메인 프로세스 unhandled rejection: ' + (e && e.message || e) }); } catch { /* window gone */ }
 });
+
+// 실패를 {ok:false, error}로 정규화 — IPC reject가 렌더러 상태를 어긋내지 않게
+const safe = (fn) => async (...a) => {
+  try { return await fn(...a); }
+  catch (e) {
+    applog.write('ipc-error', (e && e.stack) || String(e));
+    return { ok: false, error: String(e && e.message || e) };
+  }
+};
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -44,12 +57,23 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
   win.on('closed', () => { win = null; });
+  // 렌더러가 죽거나 멈추면 백지 창으로 방치하지 않는다
+  win.webContents.on('render-process-gone', (_e, details) => {
+    applog.write('renderer-gone', JSON.stringify(details));
+    if (win && !win.isDestroyed()) win.webContents.reload();
+  });
+  win.on('unresponsive', () => applog.write('renderer-unresponsive', 'window unresponsive'));
 }
 
 app.whenReady().then(() => {
+  applog.write('boot', `v${app.getVersion()} ${process.platform}/${process.arch} electron ${process.versions.electron}`);
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   initAutoUpdate();
+}).catch((e) => {
+  applog.write('boot-fail', (e && e.stack) || String(e));
+  try { dialog.showErrorBox('Social AI Team 시작 실패', String(e && e.message || e)); } catch { /* headless */ }
+  app.quit();
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
@@ -81,6 +105,7 @@ function initAutoUpdate() {
   // macOS unsigned builds cannot apply updates (Squirrel requires a signature) — the
   // error handler above surfaces that instead of crashing.
   autoUpdater.checkForUpdates().catch(() => {});
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 3600 * 1000); // 장시간 켜둔 앱도 갱신
 }
 ipcMain.handle('update:version', () => app.getVersion());
 ipcMain.handle('update:check', async () => {
@@ -105,15 +130,15 @@ ipcMain.handle('setup:installIma2', () => setup.installIma2((line) => send('log'
 ipcMain.handle('setup:ima2Setup', () => pipeline.openInteractiveTerminal(app.getPath('home'), 'ima2 setup'));
 
 // ---- Workspace (clients) ---------------------------------------------------
-ipcMain.handle('ws:list', () => workspace.listClients());
-ipcMain.handle('ws:create', (_e, name) => workspace.createClient(name));
-ipcMain.handle('ws:pickFolder', async () => {
+ipcMain.handle('ws:list', safe(() => workspace.listClients()));
+ipcMain.handle('ws:create', safe((_e, name) => workspace.createClient(name)));
+ipcMain.handle('ws:pickFolder', safe(async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : workspace.addExisting(r.filePaths[0]);
-});
-ipcMain.handle('ws:status', (_e, dir) => workspace.readStatus(dir));
-ipcMain.handle('ws:outputs', (_e, dir) => workspace.listOutputs(dir));
-ipcMain.handle('ws:readFile', (_e, dir, rel) => workspace.readOutputFile(dir, rel));
+}));
+ipcMain.handle('ws:status', safe((_e, dir) => (dir ? workspace.readStatus(dir) : { statusItems: [], statusRaw: '' })));
+ipcMain.handle('ws:outputs', safe((_e, dir) => workspace.listOutputs(dir)));
+ipcMain.handle('ws:readFile', safe((_e, dir, rel) => workspace.readOutputFile(dir, rel)));
 ipcMain.handle('ws:openFolder', (_e, dir) => shell.openPath(dir));
 ipcMain.handle('ws:board', (_e, dir) => {
   try { return board.buildBoard(dir); }
@@ -136,7 +161,12 @@ function addWatch(p, handler) {
   if (watchedPaths.has(p)) return;
   try {
     const w = fs.watch(p, handler);
-    w.on('error', () => { try { w.close(); } catch { /* gone */ } watchedPaths.delete(p); });
+    w.on('error', (e) => {
+      applog.write('watch-error', p + ': ' + (e && e.message || e));
+      try { w.close(); } catch { /* gone */ }
+      watchedPaths.delete(p);
+      setTimeout(() => { if (watchDir && p.startsWith(watchDir)) addWatch(p, handler); }, 3000); // 재장전 시도
+    });
     watchers.push(w);
     watchedPaths.add(p);
   } catch { /* unwatchable */ }
@@ -189,33 +219,40 @@ ipcMain.handle('gates:approve', (_e, dir, entry) => {
 });
 
 // ---- Manual publish (네이버 등) --------------------------------------------------
-ipcMain.handle('pub:mark', (_e, dir, uid, on) => {
+ipcMain.handle('pub:mark', safe((_e, dir, uid, on) => {
   const r = publishlog.mark(dir, uid, on);
   setTimeout(pushBoard, 200);
-  return r;
-});
-// 파일에서 해당 포스트 블록을 추출해 클립보드에 복사 (네이버 에디터 붙여넣기용)
-ipcMain.handle('pub:copy', (_e, dir, rel, topic) => {
-  try {
-    const abs = path.resolve(dir, rel);
-    if (!abs.startsWith(path.resolve(dir) + path.sep)) return { ok: false, error: 'path escape' };
-    const text = fs.readFileSync(abs, 'utf8');
-    // 토픽이 등장하는 블록(직전 구분선/앵커부터 다음 구분선/앵커까지)을 잘라낸다
-    let block = text;
-    const idx = topic ? text.indexOf(String(topic).slice(0, 20)) : -1;
-    if (idx >= 0) {
-      const anchors = /^(---+|#{1,3}\s|POST\s*\d+|[A-Z]{1,2}-\d+\b)/gm;
-      let start = 0, end = text.length, m;
-      while ((m = anchors.exec(text))) {
-        if (m.index <= idx) start = m.index;
-        else { end = m.index; break; }
+  return { ok: true, ...r };
+}));
+// 레인의 모든 텍스트 파일을 스캔해 해당 포스트의 블록을 찾아 클립보드에 복사.
+// 종료 앵커는 시작과 동종(POST/ID/1레벨 헤딩)만 — 본문 내부의 ##·---에서 끊기지 않는다.
+const normText = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+ipcMain.handle('pub:copy', safe((_e, dir, lane, topic) => {
+  const laneDir = path.resolve(dir, 'outputs', lane);
+  if (!laneDir.startsWith(path.resolve(dir) + path.sep)) return { ok: false, error: 'path escape' };
+  const t = normText(topic).slice(0, 24);
+  if (!t) return { ok: false, error: '토픽이 비어 있습니다' };
+  let files = [];
+  try { files = fs.readdirSync(laneDir).filter((f) => /\.(md|txt)$/i.test(f)); } catch { /* no lane */ }
+  const anchorRe = /^(POST\s*\d+\b.*|[A-Z]{1,2}-\d+\b.*|#\s.*)$/gm; // 동종 앵커만
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(laneDir, f), 'utf8');
+    const anchors = [...text.matchAll(anchorRe)].map((m) => m.index);
+    anchors.push(text.length);
+    for (let i = 0; i < anchors.length - 1; i++) {
+      const block = text.slice(anchors[i], anchors[i + 1]);
+      if (normText(block).includes(t)) {
+        clipboard.writeText(block.trim());
+        return { ok: true, chars: block.trim().length, file: f };
       }
-      block = text.slice(start, end).trim();
     }
-    clipboard.writeText(block);
-    return { ok: true, chars: block.length };
-  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
-});
+    // 앵커가 없는 단일 포스트 파일: 파일 전체가 토픽을 담으면 통째로
+    if (!anchors.length || anchors[0] === text.length) {
+      if (normText(text).includes(t)) { clipboard.writeText(text.trim()); return { ok: true, chars: text.trim().length, file: f }; }
+    }
+  }
+  return { ok: false, error: '해당 포스트의 산출 파일을 찾지 못했습니다 — 카피가 생성됐는지 확인하세요' };
+}));
 
 // ---- Channel connection check (Blotato MCP presence) ----------------------------
 let channelCache = { at: 0, data: null };
@@ -233,14 +270,14 @@ ipcMain.handle('channels:check', () => {
 // ---- Pipeline stages -------------------------------------------------------
 ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
   const startedAt = Date.now();
-  send('stage', { state: 'start', stage, startedAt });
+  send('stage', { state: 'start', stage, startedAt, dir });
   try {
-    const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line }));
+    const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line, dir }));
     return { ...r, startedAt };
   } catch (e) {
-    return { ok: false, out: String(e && e.message || e), tail: String(e && e.message || e), startedAt };
+    return { ok: false, code: -1, out: String(e && e.message || e), tail: String(e && e.message || e), startedAt };
   } finally {
-    send('stage', { state: 'end', stage, startedAt });
+    send('stage', { state: 'end', stage, startedAt, dir });
     setTimeout(pushBoard, 300); // stages write files — refresh the board promptly
   }
 });

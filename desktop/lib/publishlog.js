@@ -5,7 +5,13 @@ const path = require('path');
 
 function file(dir) { return path.join(dir, 'context', 'publish-log.json'); }
 function load(dir) {
-  try { return JSON.parse(fs.readFileSync(file(dir), 'utf8')); } catch { return { published: {} }; }
+  const p = file(dir);
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch (e) {
+    // 파일이 있는데 깨졌으면 조용히 빈 값으로 덮지 말고 백업 후 새로 시작
+    if (fs.existsSync(p)) { try { fs.renameSync(p, p + '.corrupt-' + Date.now()); } catch { /* best effort */ } }
+    return { published: {} };
+  }
 }
 function mark(dir, uid, on) {
   const log = load(dir);
@@ -13,7 +19,10 @@ function mark(dir, uid, on) {
   if (on) log.published[uid] = new Date().toISOString();
   else delete log.published[uid];
   fs.mkdirSync(path.join(dir, 'context'), { recursive: true });
-  fs.writeFileSync(file(dir), JSON.stringify(log, null, 2));
+  // 원자적 교체 — watch 디바운스로 도는 buildBoard가 부분 기록을 읽지 않게
+  const tmp = file(dir) + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(log, null, 2));
+  fs.renameSync(tmp, file(dir));
   return log;
 }
 module.exports = { load, mark };

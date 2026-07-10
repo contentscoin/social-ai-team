@@ -3,6 +3,17 @@
 'use strict';
 const $ = (s, r) => (r || document).querySelector(s);
 const $$ = (s, r) => [...(r || document).querySelectorAll(s)];
+
+// 전역 오류 캡처는 최상단에 — 아래 DOM 바인딩이 로드 중 throw해도 잡히게
+function reportError(kind, message) {
+  try {
+    if (typeof logLine === 'function') logLine('renderer-error', `${kind}: ${message}`);
+    if (typeof toast === 'function') toast('오류가 발생했습니다 — 로그 탭에서 확인 (로그 복사로 신고 가능)');
+    if (window.api && window.api.app) window.api.app.log('renderer-' + kind, message);
+  } catch { /* 오류 처리기가 또 죽지 않게 */ }
+}
+window.addEventListener('error', (e) => reportError('error', `${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => reportError('rejection', String(e.reason && e.reason.message || e.reason).slice(0, 500)));
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const relTime = (ms) => {
   const d = Date.now() - ms;
@@ -114,7 +125,13 @@ async function selectClient(c) {
   $('#rail-folder').disabled = $('#rail-term').disabled = false;
   $('#chat-log').innerHTML = ''; S.chips = []; renderChips();
   await refreshClients();
-  await window.api.ws.watch(c.dir);
+  const w = await window.api.ws.watch(c.dir);
+  clearInterval(S.pollTimer);
+  if (!w || !w.watching) {
+    // 파일 감시 실패(네트워크 드라이브 등) — 15초 폴링으로 라이브 보드 유지
+    toast('파일 감시를 시작하지 못해 15초 주기 새로고침으로 동작합니다');
+    S.pollTimer = setInterval(() => refreshBoard(false), 15000);
+  }
   await refreshBoard(true);
 }
 
@@ -256,6 +273,7 @@ async function refreshBoard(first) {
   renderGateBar();
 }
 function applyBoard(b, first) {
+  if (b && b.error) logLine('board-error', b.error);
   const prev = S.prevStages;
   S.board = b;
   const moved = [];
@@ -386,6 +404,15 @@ function renderHero() {
     hero.innerHTML = `<div class="hero-card"><h3>클라이언트로 시작하세요</h3><p>좌측 레일의 + 버튼으로 클라이언트 폴더를 만들면, 팀이 그 폴더 안에서 브랜드·캘린더·콘텐츠를 관리합니다.</p></div>`;
     return;
   }
+  if (b && b.error) {
+    // 보드 계산 실패를 '빈 프로젝트'로 위장하지 않는다
+    hero.innerHTML = `<div class="hero-card" style="width:420px"><h3>보드를 계산하지 못했어요</h3>
+      <p>${esc(String(b.error).slice(0, 200))}</p>
+      <div class="btn-grid"><button id="hero-retry">다시 읽기</button><button id="hero-logs">로그 폴더 열기</button></div></div>`;
+    $('#hero-retry').onclick = () => refreshBoard(true);
+    $('#hero-logs').onclick = () => window.api.app.openLogs();
+    return;
+  }
   if (parseFailed) {
     const laneCounts = Object.entries(b.lanes || {}).filter(([, f]) => f.length).map(([l, f]) => `${l} ${f.length}`).join(' · ');
     hero.innerHTML = `<div class="hero-card" style="width:420px"><h3>캘린더는 있는데, 보드가 읽지 못했어요</h3>
@@ -395,7 +422,10 @@ function renderHero() {
       <button data-act="drawer">산출물 서랍 열기</button></div></div>`;
     for (const btn of $$('#hero button[data-act]')) {
       btn.onclick = () => {
-        if (btn.dataset.act === 'chat') { prefillChat(btn.dataset.t); sendChat(); }
+        if (btn.dataset.act === 'chat') {
+          if (S.chatBusy) { toast('디렉터가 이미 작업 중입니다 — 완료를 기다려주세요'); switchDock('chat'); return; }
+          prefillChat(btn.dataset.t); sendChat();
+        }
         else if (btn.dataset.act === 'drawer') openDrawer();
       };
     }
@@ -445,6 +475,8 @@ function renderCTA() {
   const cta = $('#gate-cta'); const label = $('span', cta); const icon = $('use', cta);
   cta.classList.remove('stop', 'approve');
   if (!S.client || !S.gates) { cta.disabled = true; label.textContent = '—'; return; }
+  const nodeCheck = S.gates.nodes && S.gates.nodes[S.gates.current];
+  if (!nodeCheck) { cta.disabled = true; label.textContent = S.gates.error ? '게이트 오류 — 로그 확인' : '—'; return; }
   cta.disabled = false;
   if (S.running) {
     cta.classList.add('stop'); icon.setAttribute('href', '#i-stop');
@@ -487,8 +519,8 @@ async function runStage(stage, extra) {
   try {
     const r = await window.api.pipe.runStage(S.client.dir, stage, extra ? { extraContext: extra } : {});
     S.lastRunStart[stage] = r.startedAt || Date.now() - 60000;
-    logLine(stage, r.ok ? '✔ 완료' : `✖ 종료 코드 ${r.code}`);
-    if (!r.ok && r.tail) toast(r.tail.slice(0, 120));
+    logLine(stage, r.ok ? '✔ 완료' : `✖ 실패 (${r.code ?? '-'}): ${(r.tail || r.out || r.error || '').slice(0, 200)}`);
+    if (!r.ok && (r.tail || r.out || r.error)) toast((r.tail || r.out || r.error).slice(0, 120));
   } catch (e) {
     logLine(stage, '✖ 오류: ' + e.message);
   } finally {
@@ -497,7 +529,8 @@ async function runStage(stage, extra) {
   await refreshBoard(false);
 }
 $('#gate-checklist').onclick = async (e) => {
-  const st = await window.api.ws.status(S.client ? S.client.dir : '');
+  if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+  const st = await window.api.ws.status(S.client.dir);
   const items = (st.statusItems || []).map((i) => `<div style="padding:2px 0">${i.done ? '✅' : '⬜'} ${esc(i.label)}</div>`).join('') || '<span class="muted">기록 없음</span>';
   popover(e.currentTarget, `<b>워크플로 체크리스트</b><div style="margin-top:8px;max-height:300px;overflow-y:auto;font-size:12px">${items}</div>`);
 };
@@ -509,6 +542,9 @@ function reopenApproveSheet(node) {
   for (const c of $$('.warn-sign')) if (checked.has(c.dataset.n)) c.checked = true;
 }
 function openApproveSheet(node) {
+  // innerHTML 교체 전에 진행 중인 도장 타이머를 반드시 끊는다 — 고아 인터벌이
+  // detach된 버튼으로 승인을 강행하는 사고 방지
+  if (typeof currentStampReset === 'function') currentStampReset();
   const sheet = $('#sheet-approve');
   const isCompliance = node.key === 'compliance';
   S.approveNode = node.key;
@@ -535,7 +571,7 @@ function openApproveSheet(node) {
     <div class="appr-split">
       <div class="appr-files">${isCompliance ? `
         ${blockPosts.map((p) => `<div class="verdict-row BLOCK"><span class="dot BLOCK"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}<button class="chip" data-rework="${esc(p.uid)}" style="margin-left:auto">재작업 지시</button></div>`).join('')}
-        ${warnPosts.map((p) => `<div class="verdict-row WARN"><input type="checkbox" class="warn-sign" data-n="${p.n}"><span class="dot WARN"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}</div>`).join('')}
+        ${warnPosts.map((p) => `<div class="verdict-row WARN"><input type="checkbox" class="warn-sign" data-n="${esc(p.uid)}"><span class="dot WARN"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}</div>`).join('')}
         ${warnPosts.length ? '<p class="muted small" style="margin:8px 0">WARN 사유를 확인했다면 각 항목에 서명(체크)하세요.</p>' : ''}
         <div style="margin-top:10px" id="appr-list"></div>` : '<div id="appr-list"></div>'}
       </div>
@@ -588,13 +624,16 @@ function bindStamp(btn, node, isCompliance) {
     const why = canStamp();
     if (why) { toast(why); return; }
     timer = setInterval(async () => {
+      if (!btn.isConnected) { reset(); return; } // 시트 재구성으로 detach된 버튼 — 승인 진행 금지
       p += 100 / (600 / 30);
       btn.style.setProperty('--p', Math.min(p, 100));
       if (p >= 100) {
         reset();
         btn.classList.add('stamped');
-        const warnSigned = $$('.warn-sign').filter((c) => c.checked).map((c) => Number(c.dataset.n));
-        S.gates = await window.api.gates.approve(S.client.dir, { node: node.key, signer: S.client.name, warnSigned });
+        const warnSigned = $$('.warn-sign').filter((c) => c.checked).map((c) => c.dataset.n);
+        const g = await window.api.gates.approve(S.client.dir, { node: node.key, signer: S.client.name, warnSigned });
+        if (g && g.error) { toast('승인 저장 실패: ' + g.error); btn.classList.remove('stamped'); return; }
+        S.gates = g;
         toast(`${node.label} 승인 완료`);
         setTimeout(async () => {
           closeOverlay();
@@ -616,6 +655,7 @@ let currentStampReset = null;
 // ---- dock: chat / log / inspector ---------------------------------------------------------
 function switchDock(name) {
   S.inspectorN = null;
+  S.publishCh = null;
   $$('#dock-seg button').forEach((b) => b.classList.toggle('active', b.dataset.dock === name));
   $('#dock-chat').classList.toggle('hidden', name !== 'chat');
   $('#dock-log').classList.toggle('hidden', name !== 'log');
@@ -649,7 +689,8 @@ async function sendChat() {
   if (S.running) { toast('단계 실행 중에는 디렉터 대화를 보낼 수 없습니다 (같은 폴더를 동시에 편집하게 됩니다)'); return; }
   const input = $('#chat-input');
   let msg = input.value.trim();
-  if (!msg || S.chatBusy) return;
+  if (!msg) return;
+  if (S.chatBusy) { toast('디렉터가 응답 중입니다 — 완료 후 다시 시도하세요'); return; }
   if (S.chips.length) msg = S.chips.map((c) => c.context).join('\n') + '\n\n' + msg;
   const dir = S.client.dir; // 전송 시점의 클라이언트 — 응답이 다른 클라이언트에 새지 않게
   S.chatBusy = true; $('#btn-chat-send').disabled = true;
@@ -712,6 +753,7 @@ function logLine(source, line) {
 
 function openInspector(p) {
   S.inspectorN = p.uid;
+  S.publishCh = null;
   $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden');
   $$('#dock-seg button').forEach((b) => b.classList.remove('active'));
   const box = $('#dock-inspector');
@@ -762,8 +804,8 @@ function openPublishPanel(chKey) {
   const box = $('#dock-inspector');
   box.classList.remove('hidden');
   S.inspectorN = null;
+  S.publishCh = chKey; // onBoard가 보드 갱신 시 이 패널을 재구성할 수 있게
   const posts = S.board.posts.filter((p) => p.channel === chKey);
-  const laneFile = (p) => (S.board.lanes[p.lane] || [])[0];
   const ready = posts.filter((p) => p.stage === 'ready' || p.stage === 'review');
   box.innerHTML = `
     <div class="insp-head"><button class="icon-btn" id="insp-back"><svg><use href="#i-back"/></svg></button>
@@ -788,15 +830,21 @@ function openPublishPanel(chKey) {
     window.api.ws.openFolder(S.client.dir + '/outputs/' + lane);
   };
   for (const c of $$('.pub-check', box)) c.onchange = async () => {
-    await window.api.pub.mark(S.client.dir, c.dataset.uid, c.checked);
-    toast(c.checked ? '발행 기록 완료' : '발행 기록 해제');
+    try {
+      const r = await window.api.pub.mark(S.client.dir, c.dataset.uid, c.checked);
+      if (r && r.error) throw new Error(r.error);
+      toast(c.checked ? '발행 기록 완료' : '발행 기록 해제');
+    } catch (e) {
+      c.checked = !c.checked; // 화면-파일 어긋남 방지
+      toast('발행 기록 실패: ' + e.message);
+    }
   };
   for (const btn of $$('.pub-copy', box)) btn.onclick = async () => {
-    const p = posts.find((x) => x.uid === btn.dataset.uid);
-    const f = laneFile(p);
-    if (!f) { toast('산출 파일이 없습니다'); return; }
-    const r = await window.api.pub.copy(S.client.dir, f.rel, p.topic);
-    toast(r.ok ? `본문 복사 완료 (${r.chars}자) — 에디터에 붙여넣으세요` : '복사 실패: ' + r.error);
+    // 클로저 posts가 아니라 최신 보드에서 재조회 — 열려 있는 동안 생긴 산출물도 인식
+    const p = S.board.posts.find((x) => x.uid === btn.dataset.uid);
+    if (!p) { toast('포스트를 찾을 수 없습니다'); return; }
+    const r = await window.api.pub.copy(S.client.dir, p.lane, p.topic);
+    toast(r.ok ? `본문 복사 완료 (${r.chars}자, ${r.file}) — 에디터에 붙여넣으세요` : '복사 실패: ' + r.error);
   };
 }
 
@@ -860,15 +908,23 @@ function envButtons() {
 function bindSetupButtons(root, after) {
   for (const b of $$('[data-setup]', root)) b.onclick = async () => {
     b.disabled = true; const old = b.textContent; b.textContent = old + ' …';
-    const r = await window.api.setup[b.dataset.setup]();
-    b.disabled = false; b.textContent = old;
-    if (r && r.ok === false) toast((r.tail || '실패').slice(0, 140));
-    else toast(old + ' 완료');
-    after && after();
+    try {
+      const r = await window.api.setup[b.dataset.setup]();
+      if (r && r.ok === false) toast((r.tail || r.error || '실패').slice(0, 140));
+      else toast(old + ' 완료');
+    } catch (e) {
+      toast(old + ' 실패: ' + e.message);
+    } finally {
+      b.disabled = false; b.textContent = old; // IPC reject에도 버튼이 영구 잠기지 않게
+      after && after();
+    }
   };
 }
+let settingsSeq = 0;
 async function openSettings(section) {
+  const seq = ++settingsSeq; // 빠른 재클릭 시 낡은 호출의 리스너 중복 바인딩 방지
   const s = S.env = await window.api.setup.check();
+  if (seq !== settingsSeq) return;
   const v = await window.api.update.version();
   const sheet = $('#sheet-settings');
   sheet.innerHTML = `
@@ -921,6 +977,7 @@ async function openSettings(section) {
   for (const b of $$('#set-engine button')) { b.classList.toggle('active', b.dataset.engine === S.engine); b.onclick = async () => { S.engine = await window.api.engine.set(b.dataset.engine); applyEngine(); $$('#set-engine button').forEach((x) => x.classList.toggle('active', x.dataset.engine === S.engine)); }; }
   // 엔진별 모델 선택 — 입력 후 포커스 아웃/Enter 시 저장
   S.models = await window.api.engine.getModels();
+  if (seq !== settingsSeq) return;
   const bindModel = (id, engine) => {
     const inp = $(id);
     inp.value = S.models[engine] || '';
@@ -986,43 +1043,50 @@ async function maybeWizard() {
   openSheet('#wizard');
 }
 
-// ---- 전역 오류 캡처 — 조용히 죽는 흐름 금지 ------------------------------------------------
-function reportError(kind, message) {
-  try {
-    logLine('renderer-error', `${kind}: ${message}`);
-    toast('오류가 발생했습니다 — 로그 탭에서 확인 (로그 복사로 신고 가능)');
-    window.api.app.log('renderer-' + kind, message);
-  } catch { /* 오류 처리기가 또 죽지 않게 */ }
-}
-window.addEventListener('error', (e) => reportError('error', `${e.message} @ ${e.filename}:${e.lineno}`));
-window.addEventListener('unhandledrejection', (e) => reportError('rejection', String(e.reason && e.reason.message || e.reason).slice(0, 500)));
-
 // ---- main-process events --------------------------------------------------------------------
-window.api.onLog(({ source, line }) => logLine(source, line));
+let lastMainErrToast = 0;
+window.api.onLog(({ source, line }) => {
+  logLine(source, line);
+  if (source === 'main-error' && Date.now() - lastMainErrToast > 10000) {
+    lastMainErrToast = Date.now();
+    toast('내부 오류 발생 — 로그 탭에서 확인하세요');
+  }
+});
 window.api.onBoard((payload) => {
   const b = payload && payload.board ? payload.board : payload;
   const dir = payload && payload.dir;
   if (!S.client || (dir && dir !== S.client.dir)) return; // 다른 클라이언트의 잔여 푸시 무시
+  const dirAtEntry = S.client.dir;
   applyBoard(b, false);
-  window.api.gates.get(S.client.dir).then((g) => {
+  window.api.gates.get(dirAtEntry).then((g) => {
+    if (!S.client || S.client.dir !== dirAtEntry) return; // resolve 중 클라이언트 전환됨
     S.gates = g; renderGateBar();
-    // 열려 있는 승인 시트/인스펙터는 새 데이터로 재구성
+    // 열려 있는 승인 시트/인스펙터/발행 패널은 새 데이터로 재구성
     if (S.approveNode && !$('#sheet-approve').classList.contains('hidden')) {
-      const fresh = g.nodes.find((n) => n.key === S.approveNode);
+      const fresh = (g.nodes || []).find((n) => n.key === S.approveNode);
       if (fresh) reopenApproveSheet(fresh);
     }
     if (S.inspectorN != null && !$('#dock-inspector').classList.contains('hidden')) {
       const p = S.board.posts.find((x) => x.uid === S.inspectorN);
       if (p) openInspector(p);
     }
+    if (S.publishCh && !$('#dock-inspector').classList.contains('hidden')) {
+      openPublishPanel(S.publishCh);
+    }
   });
 });
-window.api.onStage(({ state, stage }) => {
+window.api.onStage(({ state, stage, dir }) => {
+  if (dir && S.client && dir !== S.client.dir) return; // 다른 클라이언트의 스테이지 이벤트
   if (state === 'start') setRunning(stage);
   else if (stage === S.running) setRunning(null); // 지연 도착한 이전 스테이지 end 무시
 });
+let updErrToasted = false;
 window.api.onUpdate(async (u) => {
   if (u.state === 'ready') { $('#tb-update').classList.remove('hidden'); }
+  if (u.state === 'error' && !updErrToasted) {
+    updErrToasted = true; // 백그라운드 실패도 최소 1회는 통지
+    logLine('update', '업데이트 확인 실패: ' + u.message);
+  }
   const el = $('#set-upd-status');
   if (el) {
     if (u.state === 'latest') el.textContent = '최신 버전입니다';
@@ -1041,13 +1105,17 @@ $('#channel-scroll').addEventListener('scroll', redrawWire);
 
 // ---- boot --------------------------------------------------------------------------------------
 (async function boot() {
-  S.engine = await window.api.engine.get();
-  S.models = await window.api.engine.getModels();
-  applyEngine();
-  S.blotato = (await window.api.channels.check()).blotato;
-  await refreshClients();
-  renderHero();
-  if (S.clients[0]) await selectClient(S.clients[0]);
-  await maybeWizard();
+  // 초기화 단계별로 실패를 격리 — 하나가 죽어도 앱이 백지가 되지 않게
+  try { S.engine = await window.api.engine.get(); S.models = await window.api.engine.getModels(); applyEngine(); }
+  catch (e) { reportError('boot-engine', e.message); }
+  try { S.blotato = (await window.api.channels.check()).blotato; }
+  catch (e) { reportError('boot-channels', e.message); }
+  try {
+    await refreshClients();
+    renderHero();
+    if (S.clients[0]) await selectClient(S.clients[0]);
+  } catch (e) { reportError('boot-clients', e.message); toast('초기화 실패: ' + e.message); }
+  try { await maybeWizard(); }
+  catch (e) { reportError('boot-wizard', e.message); }
 })();
 })();

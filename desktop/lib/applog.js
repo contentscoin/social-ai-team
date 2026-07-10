@@ -28,9 +28,8 @@ function write(source, line) {
   } catch { /* logging must never throw */ }
 }
 
-function tail(maxBytes = 64 * 1024) {
+function tailOf(p, maxBytes) {
   try {
-    const p = file();
     const size = fs.statSync(p).size;
     const fd = fs.openSync(p, 'r');
     const len = Math.min(size, maxBytes);
@@ -38,7 +37,16 @@ function tail(maxBytes = 64 * 1024) {
     fs.readSync(fd, buf, 0, len, size - len);
     fs.closeSync(fd);
     return buf.toString('utf8');
-  } catch { return '(오늘 로그 없음)'; }
+  } catch { return ''; }
+}
+// 신고용 복사 — 자정 직후에도 재현 정보가 잘리지 않게 어제+오늘을 합쳐 최대 256KB
+function tail(maxBytes = 256 * 1024) {
+  const y = new Date(Date.now() - 86400e3).toISOString().slice(0, 10);
+  const parts = [
+    tailOf(path.join(DIR, `app-${y}.log`), Math.floor(maxBytes / 2)),
+    tailOf(file(), maxBytes),
+  ].filter(Boolean);
+  return parts.join('\n----- (날짜 경계) -----\n').slice(-maxBytes) || '(로그 없음)';
 }
 
 module.exports = { DIR, write, tail, file };

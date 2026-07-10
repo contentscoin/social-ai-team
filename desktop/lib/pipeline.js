@@ -64,21 +64,20 @@ const STAGES = {
 
 function runStage(dir, stage, opts = {}, onLine) {
   const spec = STAGES[stage];
-  if (!spec) return Promise.resolve({ ok: false, out: `unknown stage: ${stage}` });
-  if (current) return Promise.resolve({ ok: false, out: 'another stage is already running' });
+  if (!spec) return Promise.resolve({ ok: false, code: -1, out: `unknown stage: ${stage}`, tail: `unknown stage: ${stage}` });
+  if (current) return Promise.resolve({ ok: false, code: -1, out: '다른 단계가 이미 실행 중입니다', tail: '다른 단계가 이미 실행 중입니다' });
 
   const extra = opts.extraContext ? `\n\n추가 지시: ${opts.extraContext}` : '';
-  const args = [
-    '-p', spec.prompt + extra,
-    '--permission-mode', 'acceptEdits',
-    '--add-dir', dir,
-  ];
+  // 프롬프트는 stdin으로 (Windows 개행 안전 — proc.js 참조)
+  const args = ['-p', '--permission-mode', 'acceptEdits', '--add-dir', dir];
   const model = config.getModels().claude; // 파이프라인은 항상 Claude — 모델만 선택 적용
   if (model) args.push('--model', model);
+  const stdinText = spec.prompt + extra;
   const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
   const runOnce = (env) => runCmd('claude', args, onLine, {
     cwd: dir,
     env,
+    stdinText,
     onSpawn: (child) => { current = child; },
   }).then((r) => { current = null; return r; });
 
