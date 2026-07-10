@@ -255,9 +255,9 @@ function applyBoard(b, first) {
   S.board = b;
   const moved = [];
   for (const p of b.posts) {
-    const was = prev.get(p.n);
+    const was = prev.get(p.uid);
     if (was && was !== p.stage && b.stages.indexOf(p.stage) > b.stages.indexOf(was)) moved.push(p);
-    prev.set(p.n, p.stage);
+    prev.set(p.uid, p.stage);
   }
   renderChannels();
   renderBoardViews(!first && moved.length > 0, moved);
@@ -271,7 +271,7 @@ function cardId(p) { return (CH_MONO[p.channel] || '?') + '-' + p.n; }
 function makeCard(p) {
   const el = $('#tpl-post-card').content.firstElementChild.cloneNode(true);
   const color = `var(--ch-${p.channel})`;
-  el.dataset.key = p.n;
+  el.dataset.key = p.uid;
   el.style.borderLeftColor = color;
   const tile = $('.mono-tile', el);
   tile.textContent = CH_MONO[p.channel]; tile.style.background = `color-mix(in srgb, ${color} 16%, transparent)`; tile.style.color = color;
@@ -288,7 +288,7 @@ function makeCard(p) {
   if (S.running && STAGE2COL[S.running] === p.stage) el.classList.add('running-card');
   if (S.filter && p.channel !== S.filter) el.classList.add('dim');
   el.onclick = () => openInspector(p);
-  el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-card', JSON.stringify({ n: p.n, id: cardId(p), topic: p.topic, stage: p.stage })));
+  el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-card', JSON.stringify({ uid: p.uid, id: cardId(p), topic: p.topic, stage: p.stage })));
   return el;
 }
 function renderBoardViews(flip, moved) {
@@ -329,7 +329,7 @@ function renderBoardViews(flip, moved) {
     col.addEventListener('dragover', (e) => e.preventDefault());
     col.addEventListener('drop', (e) => {
       e.preventDefault();
-      const key = (() => { try { return JSON.parse(e.dataTransfer.getData('text/sat-card')).n; } catch { return null; } })();
+      const key = (() => { try { return JSON.parse(e.dataTransfer.getData('text/sat-card')).uid; } catch { return null; } })();
       const el = $(`.post-card[data-key="${key}"]`, kb);
       if (el) { el.classList.add('shake'); setTimeout(() => el.classList.remove('shake'), 400); }
       toast('카드 상태는 파일 증거로 자동 계산됩니다 — 디렉터에게 작업을 지시하세요');
@@ -501,7 +501,7 @@ function openApproveSheet(node) {
       <button class="icon-btn" id="appr-close"><svg><use href="#i-close"/></svg></button></div>
     <div class="appr-split">
       <div class="appr-files">${isCompliance ? `
-        ${blockPosts.map((p) => `<div class="verdict-row BLOCK"><span class="dot BLOCK"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}<button class="chip" data-rework="${p.n}" style="margin-left:auto">재작업 지시</button></div>`).join('')}
+        ${blockPosts.map((p) => `<div class="verdict-row BLOCK"><span class="dot BLOCK"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}<button class="chip" data-rework="${esc(p.uid)}" style="margin-left:auto">재작업 지시</button></div>`).join('')}
         ${warnPosts.map((p) => `<div class="verdict-row WARN"><input type="checkbox" class="warn-sign" data-n="${p.n}"><span class="dot WARN"></span><b>${cardId(p)}</b> ${esc(p.topic.slice(0, 30))}</div>`).join('')}
         ${warnPosts.length ? '<p class="muted small" style="margin:8px 0">WARN 사유를 확인했다면 각 항목에 서명(체크)하세요.</p>' : ''}
         <div style="margin-top:10px" id="appr-list"></div>` : '<div id="appr-list"></div>'}
@@ -533,7 +533,7 @@ function openApproveSheet(node) {
   $('#appr-close').onclick = closeOverlay;
   $('#appr-reject').onclick = () => { closeOverlay(); prefillChat(`${node.label} 산출물에 수정이 필요해: `); };
   for (const b of $$('[data-rework]', sheet)) b.onclick = () => {
-    const p = S.board.posts.find((x) => x.n === Number(b.dataset.rework));
+    const p = S.board.posts.find((x) => x.uid === b.dataset.rework);
     closeOverlay(); prefillChat(`「${cardId(p)} · ${p.topic}」가 BLOCK 판정이야. 컴플라이언스 사유를 확인하고 재작업해줘.`);
   };
   bindStamp($('#stamp', sheet), node, isCompliance);
@@ -672,7 +672,7 @@ function logLine(source, line) {
 }
 
 function openInspector(p) {
-  S.inspectorN = p.n;
+  S.inspectorN = p.uid;
   $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden');
   $$('#dock-seg button').forEach((b) => b.classList.remove('active'));
   const box = $('#dock-inspector');
@@ -880,7 +880,7 @@ window.api.onBoard((payload) => {
       if (fresh) reopenApproveSheet(fresh);
     }
     if (S.inspectorN != null && !$('#dock-inspector').classList.contains('hidden')) {
-      const p = S.board.posts.find((x) => x.n === S.inspectorN);
+      const p = S.board.posts.find((x) => x.uid === S.inspectorN);
       if (p) openInspector(p);
     }
   });

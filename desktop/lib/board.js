@@ -97,20 +97,27 @@ function parsePostBlock(n, header, block) {
     if (fmt) post.format = fmt;
   }
   if (!post.topic) {
-    const tm = header.match(/^POST\s*\d+\s*[—-]\s*(.+)$/i);
+    const tm = header.match(/^(?:POST\s*\d+|[A-Z]{1,2}-\d+)\s*[—:–-]\s*(.+)$/i);
     if (tm) post.topic = tm[1].split(/\s+—\s+/)[0].trim();
   }
   post.headerRaw = header;
   return post;
 }
 
+const ID_PLATFORM = { IG: 'Instagram', FB: 'Facebook', LI: 'LinkedIn', LN: 'LinkedIn', IN: 'LinkedIn', TH: 'Threads', X: 'X', NV: 'Naver Blog', NB: 'Naver Blog', TT: 'TikTok' };
 function parseCalendar(md) {
   const posts = [];
-  const anchors = [...md.matchAll(/^(POST\s*(\d+)\b.*)$/gim)];
+  // 앵커 두 형태: "POST 12 …" 또는 채널-ID "IG-4 …" (헤딩/볼드 장식 허용)
+  const anchors = [...md.matchAll(/^#{0,4}\s*\**\s*(?:POST\s*(\d+)|(IG|FB|LI|LN|IN|TH|X|NV|NB|TT)-(\d+))\b\**\s*(.*)$/gim)];
   for (let i = 0; i < anchors.length; i++) {
-    const start = anchors[i].index + anchors[i][0].length;
+    const m = anchors[i];
+    const start = m.index + m[0].length;
     const end = i + 1 < anchors.length ? anchors[i + 1].index : Math.min(md.length, start + 2500);
-    posts.push(parsePostBlock(Number(anchors[i][2]), anchors[i][1], md.slice(start, end)));
+    const n = Number(m[1] || m[3]);
+    const header = (m[2] ? m[2] + '-' + m[3] + ' ' : 'POST ' + n + ' ') + (m[4] || '');
+    const post = parsePostBlock(n, header, md.slice(start, end));
+    if (m[2] && !post.platform) post.platform = ID_PLATFORM[m[2].toUpperCase()] || m[2];
+    posts.push(post);
   }
   if (posts.length) return dedupe(posts);
   // fallback: summary table | # | Week | Day | Platform | Pillar | Format | Topic |
@@ -207,6 +214,14 @@ function buildBoard(dir) {
 
     return { ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform) };
   });
+  // 채널-ID 캘린더는 IG-1과 TH-1처럼 번호가 겹친다 — 카드 식별은 uid로
+  const seenUid = new Set();
+  for (const c of cards) {
+    let uid = `${c.channel}-${c.n}`;
+    while (seenUid.has(uid)) uid += 'x';
+    seenUid.add(uid);
+    c.uid = uid;
+  }
 
   // channel aggregates
   const channels = {};

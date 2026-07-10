@@ -55,19 +55,29 @@ async function claudeTurn(dir, userMsg, onLine) {
 async function codexTurn(dir, userMsg, onLine) {
   const outFile = path.join(os.tmpdir(), `sat-codex-${Date.now()}.txt`);
   const started = config.getSession(dir) === 'codex-started';
-  const base = ['exec'];
-  if (started) base.push('resume', '--last');
-  base.push('-C', dir, '--skip-git-repo-check', '--color', 'never', '-o', outFile, userMsg);
-
-  const r = await runCmd('codex', base, onLine, { cwd: dir });
+  // exec 레벨 옵션(-C, -o 등)은 반드시 resume 서브커맨드 앞에 — 뒤에 두면
+  // "unexpected argument '-C' found"로 죽는다
+  const buildArgs = (extra = []) => {
+    const a = ['exec', '-C', dir, '--skip-git-repo-check', '--color', 'never', '-o', outFile, ...extra];
+    if (started) a.push('resume', '--last');
+    a.push(userMsg);
+    return a;
+  };
+  let r = await runCmd('codex', buildArgs(), onLine, { cwd: dir });
+  let configHint = '';
+  if (!r.ok && /Error loading config\.toml/i.test(r.out)) {
+    onLine && onLine('[chat] config.toml 파싱 실패 — 사용자 설정을 무시하고 재시도합니다.');
+    configHint = '\n\n(참고: ~/.codex/config.toml에 이 codex 버전이 모르는 값이 있습니다 — 예: model_reasoning_effort는 none/minimal/low/medium/high/xhigh만 지원. 수정하면 이 우회가 필요 없습니다.)';
+    r = await runCmd('codex', buildArgs(['--ignore-user-config']), onLine, { cwd: dir });
+  }
   config.setSession(dir, 'codex-started');
   let text = '';
   try { text = fs.readFileSync(outFile, 'utf8').trim(); fs.unlinkSync(outFile); } catch { /* no file */ }
   if (!text) text = (r.tail || r.out || '(응답 없음)').slice(-1200);
   if (!r.ok && AUTH_FAIL.test(r.out)) {
-    return { ok: false, text: 'Codex 인증 실패 — 사이드바 "Codex 로그인 (OAuth)"으로 로그인 후 다시 시도하세요.', engine: 'codex' };
+    return { ok: false, text: 'Codex 인증 실패 — 설정의 "Codex 로그인 (OAuth)"으로 로그인 후 다시 시도하세요.', engine: 'codex' };
   }
-  return { ok: r.ok, text, engine: 'codex' };
+  return { ok: r.ok, text: text + (r.ok ? configHint : ''), engine: 'codex' };
 }
 
 async function send(dir, userMsg, onLine) {
