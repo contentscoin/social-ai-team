@@ -61,15 +61,19 @@ async function genClaudeSvg(dir, job, onLine) {
   const model = config.getModels().claude;
   const args = ['-p', '--add-dir', dir];
   if (model) args.push('--model', model);
+  // 디자인 팩(레이아웃 아키타입·한글 타이포 규칙) 주입 — 매번 다른 즉흥 디자인이 아니라 검증된 틀 위에서
+  let designPack = '';
+  try { designPack = require('./promptlab').packContext('svg', 6000); } catch { /* 팩 없이도 동작 */ }
   const prompt =
     `${dir}/context/brand-style.md 를 읽고(없으면 모던·미니멀 기본), 아래 소셜 포스트의 피드 이미지를 SVG로 디자인하라.\n` +
     `규칙:\n- 캔버스 정확히 ${w}x${h} (viewBox="0 0 ${w} ${h}", width/height 명시)\n` +
+    `- 아래 디자인 팩의 아키타입 중 포스트 성격에 맞는 것 하나를 고르고, 한글 타이포·색·여백 규칙을 그대로 지켜라\n` +
     `- 브랜드 팔레트와 무드 반영, 사진 대신 도형·그라디언트·패턴 일러스트 구성\n` +
     `- 한글 텍스트 font-family="Pretendard, 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif"\n` +
     `- 외부 이미지/폰트/스크립트 참조 절대 금지 (완전 self-contained)\n` +
-    `- 텍스트는 핵심 훅 1~2줄 + 필요시 브랜드명. 가장자리 96px 안전 여백.\n` +
     `- 출력은 SVG 코드만. 설명·코드펜스 금지. 반드시 <svg 로 시작해 </svg>로 끝낼 것.\n\n` +
-    `[포스트]\n${job.prompt}`;
+    `[포스트]\n${job.prompt}` +
+    (designPack ? `\n\n[디자인 팩]\n${designPack}` : '');
   onLine && onLine('[render] 클로드 디자인 — SVG 설계 중…');
   const r = await runCmd('claude', args, null, { cwd: dir, stdinText: prompt, timeoutMs: 5 * 60_000 });
   const svg = extractSvg(r.out);
@@ -102,10 +106,29 @@ async function genOpenAI(dir, job, onLine) {
 }
 
 // (3) ima2 — ChatGPT OAuth 이미지 (설치 마법사의 ima2 레인 재사용)
+// ima2 gen은 로컬 `ima2 serve` 데몬이 필요하다 — 죽어 있으면 자동 기동 후 1회 재시도.
+let ima2ServeLastStart = 0;
+async function ensureIma2Serve(onLine) {
+  if (Date.now() - ima2ServeLastStart < 5 * 60_000) return false; // 5분 내 재기동 반복 금지
+  ima2ServeLastStart = Date.now();
+  onLine && onLine('[render] ima2 serve가 꺼져 있음 — 자동 시작합니다…');
+  try {
+    const { spawn } = require('child_process');
+    const { resolveCmd, envWithPath } = require('./proc');
+    const cmd = resolveCmd('ima2') || 'ima2';
+    const p = spawn(cmd, ['serve'], { detached: true, stdio: 'ignore', env: envWithPath(), shell: isWin, windowsHide: true });
+    p.unref();
+  } catch { return false; }
+  await new Promise((r) => setTimeout(r, 6000)); // 서버 기동 대기
+  return true;
+}
+const IMA2_DOWN = /server unreachable|ima2 serve/i;
 async function genIma2(dir, job, onLine) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sat-ima2-'));
   onLine && onLine('[render] ima2 생성 중…');
-  const r = await runCmd('ima2', ['gen', job.prompt, '-d', tmp, '--quality', 'high'], onLine, { cwd: dir, timeoutMs: 10 * 60_000 });
+  const run = () => runCmd('ima2', ['gen', job.prompt, '-d', tmp, '--quality', 'high'], onLine, { cwd: dir, timeoutMs: 10 * 60_000 });
+  let r = await run();
+  if (!r.ok && IMA2_DOWN.test(r.out) && await ensureIma2Serve(onLine)) r = await run();
   const made = (fs.existsSync(tmp) ? fs.readdirSync(tmp) : []).filter((f) => /\.(png|jpe?g|webp)$/i.test(f));
   if (!r.ok || !made.length) return err('ima2', r.tail || 'ima2가 이미지를 만들지 못했습니다');
   const { abs, rel } = outName(dir, 'creatives', job.base, path.extname(made[0]).slice(1));
@@ -268,6 +291,7 @@ async function genReplicate(dir, job, onLine) {
   if (!s.model || !s.model.includes('/')) return err('replicate', '모델을 "owner/name" 형식으로 설정하세요 (예: wan-video/wan-2.2-i2v-a14b) — replicate.com/collections/text-to-video 참고');
   const headers = { Authorization: `Bearer ${s.token}`, 'Content-Type': 'application/json', Prefer: 'wait=10' };
   const input = { prompt: job.prompt };
+  if (job.negative) input.negative_prompt = job.negative;
   if (job.refAbs) {
     const mime = /\.png$/i.test(job.refAbs) ? 'image/png' : 'image/jpeg';
     input[s.imageKey || 'image'] = `data:${mime};base64,${fs.readFileSync(job.refAbs).toString('base64')}`;
@@ -370,6 +394,7 @@ async function genComfy(dir, job, onLine) {
   let wf;
   try { wf = fs.readFileSync(s.workflowPath, 'utf8'); } catch (e) { return err('comfyui', '워크플로 파일을 읽지 못했습니다: ' + e.message); }
   wf = wf.split('__PROMPT__').join(job.prompt.replace(/"/g, '\\"'));
+  wf = wf.split('__NEGATIVE__').join(String(job.negative || '').replace(/"/g, '\\"'));
   let wfJson;
   try { wfJson = JSON.parse(wf); } catch { return err('comfyui', '워크플로 JSON 파싱 실패 — API 포맷(Save (API Format))으로 내보냈는지 확인'); }
   onLine && onLine('[render] ComfyUI 큐 제출 중…');
@@ -427,7 +452,9 @@ async function genIma2Video(dir, job, onLine) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sat-ima2v-'));
   args.push('-d', tmp);
   onLine && onLine('[render] ima2(Grok) 영상 생성 중…');
-  const r = await runCmd('ima2', args, onLine, { cwd: dir, timeoutMs: 20 * 60_000 });
+  const runV = () => runCmd('ima2', args, onLine, { cwd: dir, timeoutMs: 20 * 60_000 });
+  let r = await runV();
+  if (!r.ok && IMA2_DOWN.test(r.out) && await ensureIma2Serve(onLine)) r = await runV();
   const made = (fs.existsSync(tmp) ? fs.readdirSync(tmp) : []).filter((f) => /\.(mp4|webm|mov)$/i.test(f));
   if (!r.ok || !made.length) return err('ima2-video', r.tail || 'ima2가 영상을 만들지 못했습니다');
   const { abs, rel } = outName(dir, 'videos', job.base, path.extname(made[0]).slice(1));

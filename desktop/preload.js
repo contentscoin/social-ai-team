@@ -66,6 +66,15 @@ contextBridge.exposeInMainWorld('api', {
     providers: (envHint) => ipcRenderer.invoke('render:providers', envHint),
     generate: (dir, job) => ipcRenderer.invoke('render:generate', dir, job),
   },
+  prompt: {
+    compile: (dir, job) => ipcRenderer.invoke('prompt:compile', dir, job),
+  },
+  packs: {
+    list: () => ipcRenderer.invoke('packs:list'),
+    delete: (file) => ipcRenderer.invoke('packs:delete', file),
+    ocSearch: (query) => ipcRenderer.invoke('oc:search', query),
+    ocLoad: (pack) => ipcRenderer.invoke('oc:load', pack),
+  },
   sec: {
     get: (ns) => ipcRenderer.invoke('sec:get', ns),
     set: (ns, values) => ipcRenderer.invoke('sec:set', ns, values),

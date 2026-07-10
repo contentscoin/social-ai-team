@@ -1112,10 +1112,16 @@ async function openRenderPanel(p) {
         <option value="5">5초</option><option value="8">8초</option><option value="10">10초</option><option value="15">15초</option><option value="30">30초</option>
       </select>
     </div>
-    <textarea id="rp-prompt" class="rp-input" rows="4" placeholder="생성 프롬프트">${esc(prefill)}</textarea>
+    <textarea id="rp-prompt" class="rp-input" rows="4" placeholder="브리프 (컴파일하면 시각 언어 프롬프트로 변환됩니다)">${esc(prefill)}</textarea>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="rp-compile" style="flex:1">✨ 프롬프트 컴파일</button>
+      <label class="small muted" style="display:flex;gap:5px;align-items:center;white-space:nowrap">
+        <input type="checkbox" id="rp-auto" checked> 생성 전 자동 컴파일</label>
+    </div>
+    <textarea id="rp-negative" class="rp-input hidden" rows="2" placeholder="네거티브 프롬프트 (지원 모델만)"></textarea>
     <div class="small muted" id="rp-ref">${p.thumb ? `키프레임: ${esc(p.thumb.split(/[\\/]/).pop())} 사용` : '키프레임 없음 — 영상 레인은 먼저 이미지를 생성하면 그걸 참조합니다'}</div>
     <button id="rp-go" class="accent" style="width:100%">▶ 생성</button>
-    <p class="muted small" style="margin-top:4px">완료되면 파일이 outputs/에 저장되고 카드 썸네일로 바로 표시됩니다.</p>`;
+    <p class="muted small" style="margin-top:4px">컴파일러는 브랜드 팔레트·카피의 VISUAL DIRECTION·프롬프트 팩을 재료로 씁니다. 결과는 수정 가능합니다.</p>`;
   const syncKind = (kind) => {
     $('#rp-provider').innerHTML = opts(kind);
     $('#rp-dur').classList.toggle('hidden', kind !== 'video');
@@ -1126,17 +1132,50 @@ async function openRenderPanel(p) {
     syncKind(b.dataset.k);
   };
   if (kind0 === 'video') syncKind('video');
+  // 컴파일 — 기획 브리프를 시각 언어 프롬프트로 (브랜드 팔레트 + VISUAL DIRECTION + 팩)
+  let compiled = false; // 사용자가 이후 브리프를 고치면 다시 false
+  $('#rp-prompt').addEventListener('input', () => { compiled = false; });
+  const doCompile = async () => {
+    const kind = $('#rp-kind button.active').dataset.k;
+    const btn = $('#rp-compile');
+    btn.disabled = true; btn.textContent = '컴파일 중…';
+    try {
+      const r = await window.api.prompt.compile(S.client.dir, {
+        kind, provider: $('#rp-provider').value,
+        topic: p.topic, channel: p.channel, format: p.format, lane: p.lane,
+        prompt: $('#rp-prompt').value.trim(),
+        size: $('#rp-size').value, duration: Number($('#rp-dur').value) || 5,
+      });
+      if (r && r.ok && r.prompt) {
+        $('#rp-prompt').value = r.prompt;
+        const neg = $('#rp-negative');
+        if (r.negative) { neg.value = r.negative; neg.classList.remove('hidden'); }
+        compiled = true;
+        toast(`컴파일 완료 (${r.via === 'claude' ? 'Claude' : '템플릿'}${r.vd ? ' + VISUAL DIRECTION' : ''})`);
+      } else toast('컴파일 실패: ' + ((r && r.error) || '알 수 없음'));
+    } catch (e) { toast('컴파일 실패: ' + e.message); }
+    finally { btn.disabled = false; btn.textContent = '✨ 프롬프트 컴파일'; }
+    return compiled;
+  };
+  $('#rp-compile').onclick = doCompile;
   $('#rp-go').onclick = async () => {
     const kind = $('#rp-kind button.active').dataset.k;
     const provider = $('#rp-provider').value;
-    const prompt = $('#rp-prompt').value.trim();
-    if (!prompt) { toast('프롬프트를 입력하세요'); return; }
+    if (!$('#rp-prompt').value.trim()) { toast('프롬프트를 입력하세요'); return; }
     const go = $('#rp-go');
+    // ffmpeg/claude-svg 외 레인은 자동 컴파일 (원 브리프 그대로 보내면 결과가 엉망이 된다)
+    if ($('#rp-auto').checked && !compiled && provider !== 'ffmpeg' && provider !== 'claude-svg') {
+      go.disabled = true; go.textContent = '컴파일 중…';
+      await doCompile();
+      go.disabled = false;
+    }
+    const prompt = $('#rp-prompt').value.trim();
     go.disabled = true; go.textContent = '생성 중… (로그 탭에서 진행 확인)';
     const dir = S.client.dir;
     try {
       const r = await window.api.render.generate(dir, {
         kind, provider, prompt,
+        negative: $('#rp-negative').value.trim() || null,
         base: `${p.chId || 'etc'}-${p.n}`,
         size: $('#rp-size').value,
         duration: Number($('#rp-dur').value) || 5,
@@ -1453,6 +1492,7 @@ async function openSettings(section) {
   // 채널 토큰 폼 (직접 발행) + 렌더 프로바이더 키 폼
   buildSecretForms($('#sec-forms-ch', sheet), CH_SECRET_FORMS, true);
   buildSecretForms($('#sec-forms-rd', sheet), RD_SECRET_FORMS, false);
+  renderPackSection($('#sec-forms-rd', sheet));
   if (section) $(`.settings-nav button[data-sec="${section}"]`, sheet).click();
   openSheet('#sheet-settings');
 }
@@ -1483,7 +1523,53 @@ const RD_SECRET_FORMS = [
     fields: [['url', 'URL (예: http://127.0.0.1:8188)'], ['workflowPath', '워크플로 JSON 파일 경로']] },
   { ns: 'custom-video', title: '커스텀 HTTP 브릿지', hint: 'POST {prompt, image_b64?, duration} → {video_url|image_url|…_b64} 규약의 자체 엔드포인트 — 아직 내장되지 않은 신생 서비스(Hyperframe 등)를 여기로 연결.',
     fields: [['url', '엔드포인트 URL'], ['headers', '추가 헤더 (JSON, 선택)']] },
+  { ns: 'opencrab', title: 'OpenCrab MCP (프롬프트 팩)', hint: 'opencrab.sh의 내 MCP 엔드포인트(https://opencrab.sh/api/mcp/…)를 넣으면 아래 팩 섹션에서 프롬프트·이미지·영상 팩을 검색해 컴파일러에 로드할 수 있습니다.',
+    fields: [['endpoint', 'MCP 엔드포인트 URL']] },
 ];
+
+// ---- 프롬프트 팩 관리 (설정 → 렌더 하단) ------------------------------------------------
+async function renderPackSection(root) {
+  if (!root) return;
+  const box = document.createElement('div');
+  box.className = 'sec-form';
+  box.innerHTML = `<div class="sec-head"><b>프롬프트 팩</b><span class="muted small">컴파일러가 참조하는 시각 언어 자산</span></div>
+    <div id="pack-list" class="small" style="margin:8px 0"></div>
+    <div style="display:flex;gap:8px">
+      <input id="oc-q" class="rp-input" placeholder="OpenCrab 팩 검색 (예: 프롬프트 이미지 영상)" style="flex:1">
+      <button id="oc-search">검색</button>
+    </div>
+    <div id="oc-results" class="small" style="margin-top:8px"></div>`;
+  root.appendChild(box);
+  const refreshList = async () => {
+    const packs = await window.api.packs.list();
+    $('#pack-list', box).innerHTML = (Array.isArray(packs) ? packs : []).map((p) =>
+      `<div class="env-row" style="padding:4px 0">${esc(p.name)} <span class="chip tiny">${p.source === 'builtin' ? '내장' : '사용자'}</span>
+       ${p.source === 'user' ? `<button class="chip tiny" data-packdel="${esc(p.file)}" style="margin-left:auto">삭제</button>` : '<span style="margin-left:auto"></span>'}</div>`).join('')
+      || '<p class="muted">팩 없음</p>';
+    for (const b of $$('[data-packdel]', box)) b.onclick = async () => {
+      await window.api.packs.delete(b.dataset.packdel);
+      refreshList();
+    };
+  };
+  refreshList();
+  $('#oc-search', box).onclick = async () => {
+    const res = $('#oc-results', box);
+    res.innerHTML = '<span class="muted">검색 중…</span>';
+    const r = await window.api.packs.ocSearch($('#oc-q', box).value || '프롬프트 이미지 영상');
+    if (!r || r.error || !r.ok) { res.innerHTML = `<span style="color:var(--warn)">${esc((r && r.error) || '검색 실패 — 엔드포인트를 확인하세요')}</span>`; return; }
+    res.innerHTML = r.packs.length ? r.packs.map((p, i) =>
+      `<div class="env-row" style="padding:4px 0"><b>${esc(p.title)}</b> <span class="chip tiny">${esc(p.category)}</span>
+       <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px">${esc(p.description.slice(0, 60))}</span>
+       <button class="chip tiny" data-ocload="${i}">가져오기</button></div>`).join('') : '<p class="muted">결과 없음</p>';
+    for (const b of $$('[data-ocload]', box)) b.onclick = async () => {
+      b.disabled = true; b.textContent = '로딩…';
+      const lr = await window.api.packs.ocLoad(r.packs[Number(b.dataset.ocload)]);
+      if (lr && lr.ok) { toast(`팩 저장됨: ${lr.file}${lr.via === 'metadata' ? ' (메타데이터만 — 본문 도구 미제공 서버)' : ''}`); refreshList(); }
+      else toast('가져오기 실패: ' + ((lr && lr.error) || ''));
+      b.disabled = false; b.textContent = '가져오기';
+    };
+  };
+}
 function buildSecretForms(root, forms, isChannel) {
   if (!root) return;
   root.innerHTML = '';

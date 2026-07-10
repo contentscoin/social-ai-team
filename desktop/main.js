@@ -297,32 +297,8 @@ ipcMain.handle('pub:mark', safe((_e, dir, uid, on) => {
   setTimeout(pushBoard, 200);
   return { ok: true, ...r };
 }));
-// 레인의 모든 텍스트 파일을 스캔해 해당 포스트의 블록을 찾는다 (복사·직접 발행 초안 공용).
-// 종료 앵커는 시작과 동종(POST/ID/1레벨 헤딩)만 — 본문 내부의 ##·---에서 끊기지 않는다.
-const normText = (s) => String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-function findPostBlock(dir, lane, topic) {
-  const laneDir = path.resolve(dir, 'outputs', lane);
-  if (!laneDir.startsWith(path.resolve(dir) + path.sep)) return { ok: false, error: 'path escape' };
-  const t = normText(topic).slice(0, 24);
-  if (!t) return { ok: false, error: '토픽이 비어 있습니다' };
-  let files = [];
-  try { files = fs.readdirSync(laneDir).filter((f) => /\.(md|txt)$/i.test(f)); } catch { /* no lane */ }
-  const anchorRe = /^(POST\s*\d+\b.*|[A-Z]{1,2}-\d+\b.*|#\s.*)$/gm; // 동종 앵커만
-  for (const f of files) {
-    const text = fs.readFileSync(path.join(laneDir, f), 'utf8');
-    const anchors = [...text.matchAll(anchorRe)].map((m) => m.index);
-    anchors.push(text.length);
-    for (let i = 0; i < anchors.length - 1; i++) {
-      const block = text.slice(anchors[i], anchors[i + 1]);
-      if (normText(block).includes(t)) return { ok: true, text: block.trim(), file: f };
-    }
-    // 앵커가 없는 단일 포스트 파일: 파일 전체가 토픽을 담으면 통째로
-    if (!anchors.length || anchors[0] === text.length) {
-      if (normText(text).includes(t)) return { ok: true, text: text.trim(), file: f };
-    }
-  }
-  return { ok: false, error: '해당 포스트의 산출 파일을 찾지 못했습니다 — 카피가 생성됐는지 확인하세요' };
-}
+// 레인의 모든 텍스트 파일을 스캔해 해당 포스트의 블록을 찾는다 (복사·직접 발행 초안·프롬프트 컴파일 공용).
+const { findPostBlock } = require('./lib/postblock');
 ipcMain.handle('pub:copy', safe((_e, dir, lane, topic) => {
   const r = findPostBlock(dir, lane, topic);
   if (!r.ok) return r;
@@ -469,6 +445,16 @@ ipcMain.handle('render:generate', async (_e, dir, job) => {
 // ---- 시크릿 (채널 토큰·렌더 키) ---------------------------------------------------
 ipcMain.handle('sec:get', safe((_e, ns) => secrets.masked(ns)));
 ipcMain.handle('sec:set', safe((_e, ns, values) => secrets.set(ns, values)));
+
+// ---- 프롬프트 컴파일러 + 팩 -------------------------------------------------------
+const promptlab = require('./lib/promptlab');
+const opencrab = require('./lib/opencrab');
+ipcMain.handle('prompt:compile', safe((_e, dir, job) =>
+  promptlab.compile(dir, job, (line) => send('log', { source: 'prompt', line, dir }))));
+ipcMain.handle('packs:list', safe(() => promptlab.listPacks().map(({ name, file, source, size }) => ({ name, file, source, size }))));
+ipcMain.handle('packs:delete', safe((_e, file) => promptlab.deletePack(file)));
+ipcMain.handle('oc:search', safe((_e, query) => opencrab.search(query)));
+ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
 
 // ---- Engine + in-app director chat -----------------------------------------
 ipcMain.handle('cfg:getEngine', safe(() => config.getEngine()));

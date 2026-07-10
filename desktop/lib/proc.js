@@ -94,6 +94,9 @@ function runCmd(name, args, onLine, opts = {}) {
     }
     liveChildren.add(child);
     if (hasStdin) {
+      // EPIPE는 비동기 'error' 이벤트로 온다 — 리스너가 없으면 프로세스가 통째로 죽는다
+      // (CLI 미설치로 즉시 종료된 셸에 프롬프트를 쓰는 순간 발생)
+      child.stdin.on('error', () => { /* 이미 닫힌 stdin — close 핸들러가 실패를 보고한다 */ });
       try { child.stdin.write(String(opts.stdinText)); child.stdin.end(); } catch { /* closed early */ }
     }
     let out = '';
