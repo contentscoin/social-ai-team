@@ -82,7 +82,9 @@ function runCmd(name, args, onLine, opts = {}) {
     child.stderr.on('data', feed);
     if (opts.timeoutMs) setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, opts.timeoutMs);
     child.on('error', (e) => resolve({ ok: false, code: -1, out: out + e.message, tail: (out + e.message).slice(-500), cmd }));
-    child.on('close', (code) => resolve({ ok: code === 0, code, out, tail: out.slice(-500), cmd, child }));
+    // 주의: 결과 객체는 IPC로 렌더러에 그대로 전달된다 — ChildProcess 같은
+    // 직렬화 불가 핸들을 넣으면 "An object could not be cloned"로 죽는다
+    child.on('close', (code) => resolve({ ok: code === 0, code, out, tail: out.slice(-500), cmd }));
     if (opts.onSpawn) opts.onSpawn(child);
   });
 }

@@ -812,6 +812,7 @@ async function openSettings(section) {
           <option value="haiku">Haiku — 초경량·저비용</option>
         </datalist>
         <datalist id="dl-codex">
+          <option value="gpt-5.6-sol"></option>
           <option value="gpt-5.5-codex"></option>
           <option value="gpt-5.5"></option>
           <option value="gpt-5-codex"></option>
