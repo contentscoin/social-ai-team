@@ -14,7 +14,7 @@
 6. **직접 발행 — Blotato 불필요 (v0.9)** — 설정 → 채널에 각 플랫폼 개발자 토큰을 넣으면 앱이 공식 API로 바로 발행합니다: **X**(텍스트+이미지, OAuth 1.0a 자체 서명·v2 미디어 업로드), **Facebook 페이지**(텍스트+이미지), **Threads**(텍스트), **LinkedIn**(텍스트+이미지, /rest/posts). 발행 전 컴포저에서 본문을 최종 확인·수정하고, **지금 발행** 또는 **예약**(`context/publish-queue.json` + 60초 스케줄러, 앱 재시작에도 유지). Instagram·네이버는 API 제약(공개 이미지 URL 필수/미제공)으로 수동 체크리스트를 유지합니다 — [복사] → 에디터 붙여넣기 → 발행함 체크. 토큰은 `~/.social-ai-team/secrets.json`(0600)에만 저장.
 7. **인앱 렌더 엔진 — 프롬프트 md가 아니라 실물 (v0.9)** — 카드 인스펙터의 [🎨 비주얼 생성]으로 실제 PNG/MP4를 만듭니다.
    - 이미지: **클로드 디자인**(브랜드 스타일 기반 SVG 설계 → 앱이 PNG로 렌더, **API 키 불필요·기본 레인**) / OpenAI gpt-image-1(코덱스 이미지) / ima2(ChatGPT OAuth) / ComfyUI / 커스텀
-   - 영상: **Runway**(키프레임→영상) / **Higgsfield DoP** / OpenAI Sora / ima2·Grok / **ComfyUI**(Wan·Hunyuan 등 오픈소스 로컬) / 커스텀 HTTP 브릿지
+   - 영상: **ffmpeg**(로컬 무료 — 렌더 이미지로 켄번즈/슬라이드쇼 조립) / **Runway**(키프레임→영상, veo3.1 모델 선택 가능) / **Higgsfield DoP** / **Google Veo**(Gemini API) / **Replicate**(Wan·Kling·Hunyuan 등 오픈모델 게이트웨이) / ima2·Grok / **ComfyUI**(오픈소스 로컬) / 커스텀 HTTP 브릿지
    - 산출 파일은 `ig-1.png`처럼 카드 ID로 저장돼 **카드 썸네일·인스펙터 미리보기(영상 재생 포함)로 즉시 표시**되고 비주얼 단계가 자동 승격됩니다.
 8. **엔진·모델 선택** — 설정 → 엔진: Claude(대화+파이프라인)와 Codex(대화)의 모델을 각각 지정 (`sonnet`/`opus`/`haiku`, `gpt-5.6-sol` 등 자유 입력). Codex 계정이 지원하지 않는 모델은 자동으로 기본 모델로 폴백하고 안내합니다.
 

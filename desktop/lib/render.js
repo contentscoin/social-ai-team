@@ -1,11 +1,13 @@
 // 인앱 렌더 엔진 — 프롬프트 md에서 멈추지 않고 실제 PNG/MP4를 만든다.
 // 이미지: claude-svg(클로드 디자인, 추가 키 불필요) / openai-image(gpt-image-1) / ima2(ChatGPT OAuth)
-// 영상:   runway API / comfyui(오픈소스 로컬) / custom-http(Higgsfield 등 브릿지) / ima2-video(Grok)
+// 영상:   runway / higgsfield / google-veo(Gemini API) / replicate(오픈모델 게이트웨이)
+//         / ffmpeg(로컬 무료 슬라이드쇼·켄번즈) / comfyui(오픈소스 로컬) / custom-http / ima2-video(Grok)
 // 산출 파일명은 `${chId}-${n}` 프리픽스 — board.js가 카드에 자동 매칭해 썸네일로 표시한다.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runCmd } = require('./proc');
+const { spawnSync } = require('child_process');
+const { runCmd, isWin } = require('./proc');
 const secrets = require('./secrets');
 const config = require('./config');
 const { svgToPng, extractSvg } = require('./svg2png');
@@ -211,37 +213,153 @@ async function genHiggsfield(dir, job, onLine) {
   } catch (e) { return err('higgsfield', e.message); }
 }
 
-// (4c) OpenAI Sora — text/image→video. multipart POST /v1/videos → 폴링 → /content 바이너리.
-async function genSora(dir, job, onLine) {
-  const key = secrets.get('openai').apiKey || process.env.OPENAI_API_KEY;
-  if (!key) return err('sora', 'OpenAI API 키가 없습니다 — 설정 → 렌더');
-  const auth = { Authorization: `Bearer ${key}` };
-  const seconds = Number(job.duration) >= 10 ? '12' : (Number(job.duration) >= 6 ? '8' : '4');
-  const size = job.size === 'story' || job.size === 'portrait' ? '720x1280' : '1280x720';
-  const form = new FormData();
-  form.append('prompt', job.prompt);
-  form.append('model', secrets.get('openai').soraModel || 'sora-2');
-  form.append('seconds', seconds);
-  form.append('size', size);
-  if (job.refAbs) form.append('input_reference', new Blob([fs.readFileSync(job.refAbs)]), path.basename(job.refAbs));
-  onLine && onLine(`[render] Sora 제출 중… (${seconds}s ${size})`);
-  const create = await fetchJson('https://api.openai.com/v1/videos', { method: 'POST', headers: auth, body: form }, 120_000);
-  if (!create.ok || !create.json || !create.json.id) return err('sora', (create.json && create.json.error && create.json.error.message) || `HTTP ${create.status}`);
-  const id = create.json.id;
-  for (let i = 0; i < 180; i++) {
-    await new Promise((r) => setTimeout(r, 5000));
-    const st = await fetchJson(`https://api.openai.com/v1/videos/${id}`, { headers: auth });
-    const status = st.json && st.json.status;
-    if (i % 6 === 0) onLine && onLine(`[render] Sora ${status || '…'}${st.json && st.json.progress ? ` ${st.json.progress}%` : ''}`);
-    if (status === 'completed') {
+// (4c) Google Veo — Gemini API predictLongRunning. text→video / image→video 모두 지원.
+//     모델명은 설정으로 교체 가능 (기본 veo-3.0-fast-generate-001; veo-3.1 프리뷰 등 입력 가능).
+async function genVeo(dir, job, onLine) {
+  const s = secrets.get('google');
+  if (!s.apiKey) return err('google-veo', 'Google AI(Gemini) API 키가 없습니다 — 설정 → 렌더');
+  const model = s.model || 'veo-3.0-fast-generate-001';
+  const headers = { 'x-goog-api-key': s.apiKey, 'Content-Type': 'application/json' };
+  const body = {
+    instances: [{ prompt: job.prompt }],
+    parameters: { aspectRatio: (job.size === 'story' || job.size === 'portrait') ? '9:16' : '16:9' },
+  };
+  if (job.refAbs) {
+    body.instances[0].image = {
+      bytesBase64Encoded: fs.readFileSync(job.refAbs).toString('base64'),
+      mimeType: /\.png$/i.test(job.refAbs) ? 'image/png' : 'image/jpeg',
+    };
+  }
+  onLine && onLine(`[render] Veo(${model}) 제출 중…`);
+  const create = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`, {
+    method: 'POST', headers, body: JSON.stringify(body),
+  }, 120_000);
+  if (!create.ok || !create.json || !create.json.name) {
+    return err('google-veo', ((create.json && create.json.error && create.json.error.message) || `HTTP ${create.status}`) + ' — 모델명이 계정에서 지원되는지 확인하세요 (설정 → 렌더)');
+  }
+  const opName = create.json.name;
+  for (let i = 0; i < 120; i++) {
+    await new Promise((r) => setTimeout(r, 6000));
+    const st = await fetchJson(`https://generativelanguage.googleapis.com/v1beta/${opName}`, { headers });
+    if (i % 5 === 0) onLine && onLine(`[render] Veo 생성 중… (${Math.round(i * 6 / 60)}분)`);
+    if (st.json && st.json.done) {
+      if (st.json.error) return err('google-veo', st.json.error.message || JSON.stringify(st.json.error).slice(0, 200));
+      // 응답 형태가 버전에 따라 다르다 — 두 스키마 모두 수용
+      const resp = st.json.response || {};
+      const sample = (resp.generateVideoResponse && resp.generateVideoResponse.generatedSamples && resp.generateVideoResponse.generatedSamples[0])
+        || (resp.generatedVideos && resp.generatedVideos[0]) || null;
+      const uri = sample && sample.video && (sample.video.uri || sample.video.url);
+      if (!uri) return err('google-veo', '응답에서 영상 URI를 찾지 못했습니다');
       const { abs, rel } = outName(dir, 'videos', job.base, 'mp4');
       onLine && onLine('[render] 영상 다운로드 중…');
-      await downloadTo(`https://api.openai.com/v1/videos/${id}/content?variant=video`, abs, 300_000, auth);
-      return { ok: true, provider: 'sora', rel, files: [rel] };
+      const dl = uri.includes('?') ? `${uri}&key=${encodeURIComponent(s.apiKey)}` : `${uri}?key=${encodeURIComponent(s.apiKey)}`;
+      await downloadTo(dl, abs, 300_000, { 'x-goog-api-key': s.apiKey });
+      return { ok: true, provider: 'google-veo', rel, files: [rel] };
     }
-    if (status === 'failed') return err('sora', (st.json.error && st.json.error.message) || '생성 실패');
   }
-  return err('sora', '15분 내에 완료되지 않았습니다');
+  return err('google-veo', '12분 내에 완료되지 않았습니다');
+}
+
+// (4d) Replicate — 오픈모델 게이트웨이. 토큰 하나로 Wan/Kling/Hunyuan/LTX 등 어떤 호스팅 모델이든.
+//     설정: token, model("owner/name"), imageKey(모델별 이미지 입력 필드명, 기본 image).
+async function genReplicate(dir, job, onLine) {
+  const s = secrets.get('replicate');
+  if (!s.token) return err('replicate', 'Replicate API 토큰이 없습니다 — 설정 → 렌더');
+  if (!s.model || !s.model.includes('/')) return err('replicate', '모델을 "owner/name" 형식으로 설정하세요 (예: wan-video/wan-2.2-i2v-a14b) — replicate.com/collections/text-to-video 참고');
+  const headers = { Authorization: `Bearer ${s.token}`, 'Content-Type': 'application/json', Prefer: 'wait=10' };
+  const input = { prompt: job.prompt };
+  if (job.refAbs) {
+    const mime = /\.png$/i.test(job.refAbs) ? 'image/png' : 'image/jpeg';
+    input[s.imageKey || 'image'] = `data:${mime};base64,${fs.readFileSync(job.refAbs).toString('base64')}`;
+  }
+  onLine && onLine(`[render] Replicate ${s.model} 제출 중…`);
+  const create = await fetchJson(`https://api.replicate.com/v1/models/${s.model}/predictions`, {
+    method: 'POST', headers, body: JSON.stringify({ input }),
+  }, 120_000);
+  if (!create.ok || !create.json || !create.json.id) {
+    return err('replicate', ((create.json && (create.json.detail || create.json.title)) || `HTTP ${create.status}`).toString().slice(0, 250));
+  }
+  const getUrl = create.json.urls && create.json.urls.get;
+  let pred = create.json;
+  for (let i = 0; i < 240 && !['succeeded', 'failed', 'canceled'].includes(pred.status); i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const st = await fetchJson(getUrl, { headers: { Authorization: `Bearer ${s.token}` } });
+    if (st.json) pred = st.json;
+    if (i % 6 === 0) onLine && onLine(`[render] Replicate ${pred.status || '…'} (${Math.round(i * 5 / 60)}분)`);
+  }
+  if (pred.status !== 'succeeded') return err('replicate', (pred.error || pred.status || '실패').toString().slice(0, 250));
+  // output은 모델마다 문자열/배열/객체 — URL을 재귀 탐색
+  const findUrl = (v) => {
+    if (typeof v === 'string' && /^https?:\/\//.test(v)) return v;
+    if (Array.isArray(v)) { for (const x of v) { const u = findUrl(x); if (u) return u; } }
+    else if (v && typeof v === 'object') { for (const x of Object.values(v)) { const u = findUrl(x); if (u) return u; } }
+    return null;
+  };
+  const url = findUrl(pred.output);
+  if (!url) return err('replicate', '출력에서 URL을 찾지 못했습니다');
+  const isImg = /\.(png|jpe?g|webp)(\?|$)/i.test(url);
+  const { abs, rel } = outName(dir, isImg ? 'creatives' : 'videos', job.base, isImg ? 'png' : 'mp4');
+  onLine && onLine('[render] 결과 다운로드 중…');
+  await downloadTo(url, abs);
+  return { ok: true, provider: 'replicate', rel, files: [rel] };
+}
+
+// (4e) ffmpeg — 로컬 무료 조립 레인. 렌더된 이미지 1장이면 켄번즈, 여러 장이면 크로스페이드 슬라이드쇼.
+let ffmpegCached = null;
+function hasFfmpeg() {
+  if (ffmpegCached !== null) return ffmpegCached;
+  try { ffmpegCached = spawnSync(isWin ? 'where' : 'which', ['ffmpeg'], { windowsHide: true }).status === 0; }
+  catch { ffmpegCached = false; }
+  return ffmpegCached;
+}
+async function genFfmpeg(dir, job, onLine) {
+  if (!hasFfmpeg()) return err('ffmpeg', 'ffmpeg가 설치돼 있지 않습니다 — Windows: winget install ffmpeg / macOS: brew install ffmpeg');
+  // 이 포스트의 렌더 이미지 수집 (refAbs 우선 + base 프리픽스 렌더들)
+  const imgs = [];
+  if (job.refAbs) imgs.push(job.refAbs);
+  try {
+    const cdir = path.join(dir, 'outputs', 'creatives');
+    const prefix = new RegExp(`^${job.base}(?![0-9])`, 'i');
+    for (const f of fs.readdirSync(cdir).sort()) {
+      if (prefix.test(f) && /\.(png|jpe?g|webp)$/i.test(f)) {
+        const p2 = path.join(cdir, f);
+        if (!imgs.includes(p2)) imgs.push(p2);
+      }
+    }
+  } catch { /* 레인 없음 */ }
+  if (!imgs.length) return err('ffmpeg', '이 카드의 렌더 이미지가 없습니다 — 먼저 이미지 레인으로 생성하세요');
+  imgs.splice(4); // 최대 4장
+  const [w, h] = job.size === 'story' || job.size === 'portrait' ? [1080, 1920] : (job.size === 'landscape' ? [1920, 1080] : [1080, 1080]);
+  const dur = Math.min(30, Math.max(3, Number(job.duration) || 6));
+  const { abs, rel } = outName(dir, 'videos', job.base, 'mp4');
+  let args;
+  if (imgs.length === 1) {
+    // 켄번즈 — 천천히 줌인
+    const frames = dur * 30;
+    args = ['-y', '-loop', '1', '-i', imgs[0], '-vf',
+      `scale=${w * 2}:${h * 2}:force_original_aspect_ratio=increase,crop=${w * 2}:${h * 2},` +
+      `zoompan=z='min(zoom+0.0008,1.18)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30,format=yuv420p`,
+      '-t', String(dur), '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-movflags', '+faststart', abs];
+  } else {
+    // 슬라이드쇼 + 크로스페이드
+    const fade = 0.5;
+    const per = dur / imgs.length;
+    const inputs = imgs.flatMap((i) => ['-loop', '1', '-t', String((per + fade).toFixed(2)), '-i', i]);
+    let fc = imgs.map((_, i) => `[${i}:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},setsar=1[v${i}]`).join(';');
+    let last = 'v0';
+    for (let i = 1; i < imgs.length; i++) {
+      const out = `x${i}`;
+      fc += `;[${last}][v${i}]xfade=transition=fade:duration=${fade}:offset=${Math.max(0.1, per * i - fade / 2).toFixed(2)}[${out}]`;
+      last = out;
+    }
+    fc += `;[${last}]format=yuv420p[final]`;
+    args = ['-y', ...inputs, '-filter_complex', fc, '-map', '[final]',
+      '-t', String(dur), '-r', '30', '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-movflags', '+faststart', abs];
+  }
+  onLine && onLine(`[render] ffmpeg ${imgs.length === 1 ? '켄번즈' : imgs.length + '장 슬라이드쇼'} 조립 중… (${dur}s ${w}x${h})`);
+  const r = await runCmd('ffmpeg', args, null, { timeoutMs: 5 * 60_000 });
+  if (!r.ok || !fs.existsSync(abs)) return err('ffmpeg', (r.tail || 'ffmpeg 실패').slice(-300));
+  return { ok: true, provider: 'ffmpeg', rel, files: [rel] };
 }
 
 // (5) ComfyUI — 오픈소스 로컬 엔진 브릿지 (Wan/HunyuanVideo 등 사용자가 띄운 워크플로)
@@ -320,7 +438,10 @@ async function genIma2Video(dir, job, onLine) {
 
 // ---- 디스패치 ----------------------------------------------------------------------
 const IMAGE_PROVIDERS = { 'claude-svg': genClaudeSvg, 'openai-image': genOpenAI, ima2: genIma2, comfyui: genComfy, custom: genCustom };
-const VIDEO_PROVIDERS = { runway: genRunway, higgsfield: genHiggsfield, sora: genSora, comfyui: genComfy, custom: genCustom, 'ima2-video': genIma2Video };
+const VIDEO_PROVIDERS = {
+  ffmpeg: genFfmpeg, runway: genRunway, higgsfield: genHiggsfield, 'google-veo': genVeo,
+  replicate: genReplicate, comfyui: genComfy, custom: genCustom, 'ima2-video': genIma2Video,
+};
 
 // 사용 가능 여부 — 설정 UI와 생성 패널의 프로바이더 선택지에 쓴다
 function availability(env) {
@@ -333,12 +454,14 @@ function availability(env) {
       custom: { ok: secrets.has('custom-video', ['url']), label: '커스텀 HTTP' },
     },
     video: {
-      runway: { ok: secrets.has('runway', ['apiKey']), label: 'Runway (image→video)' },
+      ffmpeg: { ok: hasFfmpeg(), label: 'ffmpeg 슬라이드쇼·켄번즈 (로컬 무료 — 렌더 이미지 조립)' },
+      runway: { ok: secrets.has('runway', ['apiKey']), label: 'Runway (image→video · veo3.1 모델 선택 가능)' },
       higgsfield: { ok: secrets.has('higgsfield', ['keyId', 'keySecret']), label: 'Higgsfield DoP (image→video)' },
-      sora: { ok: secrets.has('openai', ['apiKey']) || !!process.env.OPENAI_API_KEY, label: 'OpenAI Sora (text/image→video)' },
+      'google-veo': { ok: secrets.has('google', ['apiKey']), label: 'Google Veo (Gemini API · text/image→video)' },
+      replicate: { ok: secrets.has('replicate', ['token', 'model']), label: 'Replicate (Wan/Kling/Hunyuan 등 오픈모델 게이트웨이)' },
       'ima2-video': { ok: !!(env && env.ima2), label: 'ima2 · Grok (text/image→video)' },
       comfyui: { ok: secrets.has('comfyui', ['url', 'workflowPath']), label: 'ComfyUI (오픈소스 로컬 — Wan/Hunyuan 등)' },
-      custom: { ok: secrets.has('custom-video', ['url']), label: '커스텀 HTTP 브릿지' },
+      custom: { ok: secrets.has('custom-video', ['url']), label: '커스텀 HTTP 브릿지 (신생 서비스 연결용)' },
     },
   };
 }

@@ -1109,7 +1109,7 @@ async function openRenderPanel(p) {
         <option value="landscape">가로 16:9</option>
       </select>
       <select id="rp-dur" class="rp-input hidden" style="width:90px">
-        <option value="5">5초</option><option value="10">10초</option>
+        <option value="5">5초</option><option value="8">8초</option><option value="10">10초</option><option value="15">15초</option><option value="30">30초</option>
       </select>
     </div>
     <textarea id="rp-prompt" class="rp-input" rows="4" placeholder="생성 프롬프트">${esc(prefill)}</textarea>
@@ -1469,15 +1469,19 @@ const CH_SECRET_FORMS = [
     fields: [['personId', 'Person ID (urn 뒷부분)'], ['token', '액세스 토큰']] },
 ];
 const RD_SECRET_FORMS = [
-  { ns: 'openai', title: 'OpenAI (이미지 gpt-image-1 · 영상 Sora)', hint: 'platform.openai.com API 키 — "코덱스 이미지" 레인.',
+  { ns: 'openai', title: 'OpenAI (이미지 gpt-image-1)', hint: 'platform.openai.com API 키 — "코덱스 이미지" 레인.',
     fields: [['apiKey', 'API Key']] },
-  { ns: 'runway', title: 'Runway', hint: 'dev.runwayml.com 개발자 포털 키. 키프레임 이미지→영상 (gen4_turbo 기준 5초 ≈ $0.25).',
+  { ns: 'google', title: 'Google Veo (Gemini API)', hint: 'aistudio.google.com에서 발급한 Gemini API 키. text/image→video. 모델명은 계정에 열린 것으로 (예: veo-3.0-fast-generate-001, veo-3.1-generate-preview).',
+    fields: [['apiKey', 'API Key'], ['model', '모델 (기본 veo-3.0-fast-generate-001)']] },
+  { ns: 'runway', title: 'Runway', hint: 'dev.runwayml.com 개발자 포털 키. 키프레임 이미지→영상 (gen4_turbo 기준 5초 ≈ $0.25). 모델에 veo3.1 등 Runway 경유 모델도 입력 가능.',
     fields: [['apiKey', 'API Secret'], ['model', '모델 (기본 gen4_turbo)']] },
   { ns: 'higgsfield', title: 'Higgsfield', hint: 'platform.higgsfield.ai에서 발급한 Key ID/Secret. DoP image→video.',
     fields: [['keyId', 'Key ID'], ['keySecret', 'Key Secret'], ['model', '모델 (기본 dop-turbo)']] },
+  { ns: 'replicate', title: 'Replicate (오픈모델 게이트웨이)', hint: 'replicate.com 토큰 하나로 Wan·Kling·Hunyuan·LTX 등 호스팅 모델 사용. 모델은 "owner/name" 형식 (replicate.com/collections/text-to-video 참고). 이미지 입력 필드명이 다른 모델은 imageKey로 지정.',
+    fields: [['token', 'API Token'], ['model', '모델 (예: wan-video/wan-2.2-i2v-a14b)'], ['imageKey', '이미지 입력 키 (기본 image)']] },
   { ns: 'comfyui', title: 'ComfyUI (오픈소스 로컬)', hint: '로컬에 띄운 ComfyUI 주소와 API 포맷 워크플로 JSON 경로. 프롬프트 자리에 __PROMPT__ 를 넣어두면 치환됩니다.',
     fields: [['url', 'URL (예: http://127.0.0.1:8188)'], ['workflowPath', '워크플로 JSON 파일 경로']] },
-  { ns: 'custom-video', title: '커스텀 HTTP 브릿지', hint: 'POST {prompt, image_b64?, duration} → {video_url|image_url|…_b64} 규약의 자체 엔드포인트.',
+  { ns: 'custom-video', title: '커스텀 HTTP 브릿지', hint: 'POST {prompt, image_b64?, duration} → {video_url|image_url|…_b64} 규약의 자체 엔드포인트 — 아직 내장되지 않은 신생 서비스(Hyperframe 등)를 여기로 연결.',
     fields: [['url', '엔드포인트 URL'], ['headers', '추가 헤더 (JSON, 선택)']] },
 ];
 function buildSecretForms(root, forms, isChannel) {
