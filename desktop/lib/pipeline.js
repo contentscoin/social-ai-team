@@ -17,6 +17,7 @@ const STAGES = {
     label: '콘텐츠 캘린더 생성',
     prompt:
       'content-director 스킬의 Route B 1단계만 수행: content-calendar 스킬을 인라인 실행해 context/content-calendar.md를 생성하라. ' +
+      '완료 후 반드시 기계 판독용 인덱스도 저장하라: context/calendar-index.json — 형식 {"posts":[{"id","week","day","platform","pillar","format","objective","topic","angle","visual","notes"}]} 로 모든 포스트를 빠짐없이 포함 (JSON 외 다른 내용 금지). ' +
       '운영자 승인 게이트에서 대기하지 말고 캘린더를 완성해 요약만 출력하고 종료하라 (승인은 앱에서 진행한다). ' +
       'context/brand-style.md가 없으면 아무것도 만들지 말고 BRAND MISSING 한 줄만 출력하라.',
   },

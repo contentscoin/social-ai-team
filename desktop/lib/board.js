@@ -120,13 +120,32 @@ function parseCalendar(md) {
     posts.push(post);
   }
   if (posts.length) return dedupe(posts);
-  // fallback: summary table | # | Week | Day | Platform | Pillar | Format | Topic |
-  for (const row of md.matchAll(/^\|\s*(\d+)\s*\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|/gm)) {
-    posts.push({
-      n: Number(row[1]), week: row[2].trim().replace(/^W/i, ''), day: row[3].trim(),
-      platform: row[4].trim(), pillar: row[5].trim(), format: row[6].trim(),
-      objective: '', topic: row[7].trim(), angle: '', visual: '', notes: '',
-    });
+  // fallback 1: 헤더 매핑 테이블 — | ID/# | ... | 형태의 임의 컬럼 순서 표를 헤더 키워드로 해석
+  const lines = md.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\|.*\|/.test(lines[i]) || !/^\|[\s:|-]+\|/.test(lines[i + 1] || '')) continue;
+    const headers = lines[i].split('|').slice(1, -1).map((h) => h.trim().toLowerCase());
+    const col = (...keys) => headers.findIndex((h) => keys.some((k) => h.includes(k)));
+    const cId = col('id', '#', 'no', '번호'), cTopic = col('topic', '주제', '토픽', '제목');
+    if (cTopic < 0) continue;
+    const cWeek = col('week', '주차'), cDay = col('day', '요일', '날짜', 'date'),
+      cPlat = col('platform', '채널', '플랫폼'), cPil = col('pillar', '필러'),
+      cFmt = col('format', '형식', '포맷'), cObj = col('objective', '목표');
+    for (let r = i + 2; r < lines.length && /^\|.*\|/.test(lines[r]); r++) {
+      const cells = lines[r].split('|').slice(1, -1).map((c) => c.trim().replace(/\*\*/g, ''));
+      const idCell = cId >= 0 ? cells[cId] : '';
+      const idm = idCell.match(/^([A-Za-z]{1,2})-?(\d+)|^(\d+)$/);
+      if (cId >= 0 && !idm) continue;
+      const at = (c) => (c >= 0 && cells[c]) || '';
+      posts.push({
+        n: Number((idm && (idm[2] || idm[3])) || posts.length + 1),
+        week: at(cWeek).replace(/^W/i, ''), day: at(cDay),
+        platform: at(cPlat) || (idm && idm[1] ? (ID_PLATFORM[idm[1].toUpperCase()] || '') : ''),
+        pillar: at(cPil), format: at(cFmt), objective: at(cObj),
+        topic: at(cTopic), angle: '', visual: '', notes: '', headerRaw: idCell,
+      });
+    }
+    if (posts.length) return dedupe(posts);
   }
   return dedupe(posts);
 }
@@ -182,9 +201,31 @@ function verdictFor(complianceRaw, post) {
 }
 
 // ---- main entry ----------------------------------------------------------------------
+// 기계 판독용 인덱스 — 마크다운 형식과 무관하게 보드를 보장하는 1순위 소스
+function loadIndex(dir) {
+  try {
+    const j = JSON.parse(read(path.join(dir, 'context', 'calendar-index.json')));
+    if (!Array.isArray(j.posts) || !j.posts.length) return null;
+    return j.posts.map((p, i) => {
+      const id = String(p.id || '');
+      const idm = id.match(/^([A-Za-z]{1,2})-?(\d+)/);
+      return {
+        n: Number(p.n || (idm && idm[2]) || i + 1),
+        week: String(p.week || '').replace(/^W/i, ''),
+        day: String(p.day || ''),
+        platform: p.platform || (idm && ID_PLATFORM[idm[1].toUpperCase()]) || '',
+        pillar: p.pillar || '', format: p.format || '', objective: p.objective || '',
+        topic: p.topic || '', angle: p.angle || '', visual: p.visual || '', notes: p.notes || '',
+        headerRaw: id,
+      };
+    });
+  } catch { return null; }
+}
+
 function buildBoard(dir) {
   const calMd = read(path.join(dir, 'context', 'content-calendar.md'));
-  const posts = calMd ? parseCalendar(calMd) : [];
+  const indexPosts = loadIndex(dir);
+  const posts = indexPosts || (calMd ? parseCalendar(calMd) : []);
 
   const lanes = {};
   for (const lane of ['captions', 'linkedin', 'threads', 'x', 'naver', 'videos', 'storyboards', 'creatives', 'compliance', 'reviews']) {
@@ -246,7 +287,8 @@ function buildBoard(dir) {
   for (const [name, l] of Object.entries(lanes)) laneFiles[name] = l.files;
 
   return {
-    hasCalendar: !!calMd,
+    hasCalendar: !!calMd || !!indexPosts,
+    fromIndex: !!indexPosts,
     calendarHash: calMd ? crypto.createHash('sha1').update(calMd).digest('hex').slice(0, 12) : null,
     posts: cards,
     stages: STAGES,

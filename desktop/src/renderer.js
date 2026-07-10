@@ -357,16 +357,33 @@ function renderBoardViews(flip, moved) {
     });
   }
 }
+const INDEX_PROMPT = 'context/content-calendar.md를 읽고, 앱 보드가 파싱할 수 있게 context/calendar-index.json 파일을 만들어줘. 형식: {"posts":[{"id":"IG-1","week":1,"day":"화","platform":"Instagram","pillar":"...","format":"single image","objective":"...","topic":"...","angle":"...","visual":"...","notes":"..."}]} — 캘린더의 모든 포스트를 하나도 빠짐없이 포함하고, JSON 외 다른 내용은 파일에 넣지 마.';
 function renderHero() {
   const b = S.board;
   const hero = $('#hero');
-  const showHero = !S.client || !b || !b.hasCalendar;
+  const parseFailed = !!(S.client && b && b.hasCalendar && !b.posts.length);
+  const showHero = !S.client || !b || !b.hasCalendar || parseFailed;
   hero.classList.toggle('hidden', !showHero);
   $('#timeline').classList.toggle('hidden', showHero || S.view !== 'timeline');
   $('#kanban').classList.toggle('hidden', showHero || S.view !== 'kanban');
   if (!showHero) return;
   if (!S.client) {
     hero.innerHTML = `<div class="hero-card"><h3>클라이언트로 시작하세요</h3><p>좌측 레일의 + 버튼으로 클라이언트 폴더를 만들면, 팀이 그 폴더 안에서 브랜드·캘린더·콘텐츠를 관리합니다.</p></div>`;
+    return;
+  }
+  if (parseFailed) {
+    const laneCounts = Object.entries(b.lanes || {}).filter(([, f]) => f.length).map(([l, f]) => `${l} ${f.length}`).join(' · ');
+    hero.innerHTML = `<div class="hero-card" style="width:420px"><h3>캘린더는 있는데, 보드가 읽지 못했어요</h3>
+      <p>content-calendar.md의 형식이 파서와 달라 포스트를 추출하지 못했습니다.<br>
+      아래 버튼을 누르면 디렉터가 <b>보드용 인덱스(calendar-index.json)</b>를 만들어주고, 파일이 생기는 즉시 카드가 나타납니다.${laneCounts ? `<br><br>발견된 산출물: ${laneCounts} — 우측 상단 서랍 아이콘에서 내용 확인 가능` : ''}</p>
+      <div class="btn-grid"><button data-act="chat" data-t="${esc(INDEX_PROMPT)}">디렉터에게 보드 인덱스 생성 요청</button>
+      <button data-act="drawer">산출물 서랍 열기</button></div></div>`;
+    for (const btn of $$('#hero button[data-act]')) {
+      btn.onclick = () => {
+        if (btn.dataset.act === 'chat') { prefillChat(btn.dataset.t); sendChat(); }
+        else if (btn.dataset.act === 'drawer') openDrawer();
+      };
+    }
     return;
   }
   const f = b.foundation;
