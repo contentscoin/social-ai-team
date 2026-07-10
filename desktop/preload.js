@@ -32,6 +32,11 @@ contextBridge.exposeInMainWorld('api', {
     mark: (dir, uid, on) => ipcRenderer.invoke('pub:mark', dir, uid, on),
     copy: (dir, rel, topic) => ipcRenderer.invoke('pub:copy', dir, rel, topic),
   },
+  app: {
+    log: (source, line) => ipcRenderer.invoke('app:log', source, line),
+    openLogs: () => ipcRenderer.invoke('app:openLogs'),
+    copyLogs: () => ipcRenderer.invoke('app:copyLogs'),
+  },
   pipe: {
     runStage: (dir, stage, opts) => ipcRenderer.invoke('pipe:runStage', dir, stage, opts),
     stop: () => ipcRenderer.invoke('pipe:stop'),
@@ -52,8 +57,15 @@ contextBridge.exposeInMainWorld('api', {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.invoke('update:install'),
   },
-  onLog: (cb) => ipcRenderer.on('log', (_e, payload) => cb(payload)),
-  onUpdate: (cb) => ipcRenderer.on('update', (_e, payload) => cb(payload)),
-  onBoard: (cb) => ipcRenderer.on('board:update', (_e, payload) => cb(payload)),
-  onStage: (cb) => ipcRenderer.on('stage', (_e, payload) => cb(payload)),
+  onLog: (cb) => subscribe('log', cb),
+  onUpdate: (cb) => subscribe('update', cb),
+  onBoard: (cb) => subscribe('board:update', cb),
+  onStage: (cb) => subscribe('stage', cb),
 });
+
+// 구독 해제자를 반환 — 재구독 패턴에서 리스너가 누적되지 않게
+function subscribe(channel, cb) {
+  const h = (_e, payload) => cb(payload);
+  ipcRenderer.on(channel, h);
+  return () => ipcRenderer.removeListener(channel, h);
+}

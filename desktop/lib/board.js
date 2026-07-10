@@ -259,12 +259,17 @@ function buildBoard(dir) {
   const seenUid = new Set();
   let publishLog = {};
   try { publishLog = (JSON.parse(read(path.join(dir, 'context', 'publish-log.json'))) || {}).published || {}; } catch { /* none */ }
+  let calMtime = 0;
+  try { calMtime = fs.statSync(path.join(dir, 'context', 'content-calendar.md')).mtimeMs; } catch { /* none */ }
   for (const c of cards) {
     let uid = `${c.channel}-${c.n}`;
     while (seenUid.has(uid)) uid += 'x';
     seenUid.add(uid);
     c.uid = uid;
     c.published = !!publishLog[uid];
+    // stale: 캘린더(상위 계획)가 이 카드의 카피 산출물보다 최신 → 재생성 검토 필요
+    const laneNewest = (lanes[c.lane].files[0] || {}).mtime || 0;
+    c.stale = c.stage !== 'planned' && calMtime > laneNewest && laneNewest > 0;
   }
 
   // channel aggregates

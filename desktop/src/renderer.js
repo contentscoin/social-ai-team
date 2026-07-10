@@ -291,6 +291,12 @@ function makeCard(p) {
     pub.className = 'chip tiny'; pub.textContent = '발행됨'; pub.style.color = 'var(--ok)'; pub.style.borderColor = 'var(--ok)';
     $('.pc-row3', el).insertBefore(pub, $('.pc-dots', el));
   }
+  if (p.stale && !p.published) {
+    const st = document.createElement('span');
+    st.className = 'chip tiny'; st.textContent = '↻ 계획 변경됨'; st.style.color = 'var(--warn)'; st.style.borderColor = 'var(--warn)';
+    st.title = '캘린더가 이 카드의 산출물보다 최신입니다 — 카피 재생성을 검토하세요';
+    $('.pc-row3', el).insertBefore(st, $('.pc-dots', el));
+  }
   const idx = S.board.stages.indexOf(p.stage);
   $('.pc-dots', el).innerHTML = S.board.stages.map((s, i) =>
     `<span class="stage-dot ${i <= idx ? 'done' : ''} ${i === idx ? 'cur' : ''}" title="${STAGE_LABEL[s]}"></span>`).join('');
@@ -685,6 +691,12 @@ ci.addEventListener('drop', (e) => {
   renderChips(); switchDock('chat'); ci.focus();
 });
 
+$('#btn-log-folder').onclick = () => window.api.app.openLogs();
+$('#btn-log-copy').onclick = async () => {
+  const r = await window.api.app.copyLogs();
+  toast(r.ok ? `오늘 로그 ${Math.round(r.chars / 1024)}KB 복사됨 — 붙여넣어 공유하세요` : '복사 실패');
+};
+
 function logLine(source, line) {
   const pane = $('#log-pane');
   if (++S.logLines > 5000) { pane.textContent = ''; S.logLines = 0; }
@@ -973,6 +985,17 @@ async function maybeWizard() {
   $('#wz-enter').onclick = done;
   openSheet('#wizard');
 }
+
+// ---- 전역 오류 캡처 — 조용히 죽는 흐름 금지 ------------------------------------------------
+function reportError(kind, message) {
+  try {
+    logLine('renderer-error', `${kind}: ${message}`);
+    toast('오류가 발생했습니다 — 로그 탭에서 확인 (로그 복사로 신고 가능)');
+    window.api.app.log('renderer-' + kind, message);
+  } catch { /* 오류 처리기가 또 죽지 않게 */ }
+}
+window.addEventListener('error', (e) => reportError('error', `${e.message} @ ${e.filename}:${e.lineno}`));
+window.addEventListener('unhandledrejection', (e) => reportError('rejection', String(e.reason && e.reason.message || e.reason).slice(0, 500)));
 
 // ---- main-process events --------------------------------------------------------------------
 window.api.onLog(({ source, line }) => logLine(source, line));

@@ -11,6 +11,17 @@ const chat = require('./lib/chat');
 const board = require('./lib/board');
 const gates = require('./lib/gates');
 const publishlog = require('./lib/publishlog');
+const applog = require('./lib/applog');
+
+// ---- 프로세스 레벨 오류는 파일 + 렌더러 로그로 남긴다 (조용한 죽음 금지) ----------
+process.on('uncaughtException', (e) => {
+  applog.write('main-crash', (e && e.stack) || String(e));
+  try { send('log', { source: 'main-error', line: '메인 프로세스 예외: ' + (e && e.message || e) }); } catch { /* window gone */ }
+});
+process.on('unhandledRejection', (e) => {
+  applog.write('main-rejection', (e && e.stack) || String(e));
+  try { send('log', { source: 'main-error', line: '메인 프로세스 unhandled rejection: ' + (e && e.message || e) }); } catch { /* window gone */ }
+});
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -42,7 +53,19 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+const send = (channel, payload) => {
+  if (channel === 'log' && payload) applog.write(payload.source || 'log', payload.line || '');
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+};
+
+// ---- 렌더러 오류 수집 + 로그 파일 접근 --------------------------------------------
+ipcMain.handle('app:log', (_e, source, line) => { applog.write(source, line); return { ok: true }; });
+ipcMain.handle('app:openLogs', () => { shell.openPath(applog.DIR); return { ok: true }; });
+ipcMain.handle('app:copyLogs', () => {
+  const t = applog.tail();
+  clipboard.writeText(t);
+  return { ok: true, chars: t.length };
+});
 
 // ---- Auto update (electron-updater ← GitHub Releases) -----------------------
 function initAutoUpdate() {
