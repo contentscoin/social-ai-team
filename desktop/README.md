@@ -2,20 +2,17 @@
 
 소셜 콘텐츠 팀(스킬 16종 + 서브에이전트 4종 + Codex 이미지 레인)을 PC에 설치하고 운영하는 데스크톱 컨트롤타워입니다. Electron 기반, Windows(NSIS 설치본)·macOS(DMG)·Linux(AppImage)를 지원합니다.
 
-## 앱이 하는 일
+## 앱이 하는 일 — "온에어 데스크" (v0.6+)
 
-1. **설치 마법사 — "설치했을 때 적용"**
-   - Claude Code CLI / Codex CLI 설치 여부 점검 (Codex는 버튼 한 번으로 npm 설치)
-   - 번들된 스킬 16종 → `~/.claude/skills/`, 에이전트 4종 → `~/.claude/agents/` 적용
-   - **Codex OAuth 로그인**: PC의 기본 브라우저로 표준 OAuth 진행 (실패 시 디바이스 코드 폴백)
-   - **Codex MCP 등록**: `claude mcp add -s user codex -- codex mcp-server` — pumasi 방식 위임(`mcp__codex__codex`) 활성화
-2. **클라이언트 관리** — `~/SocialAITeam/<이름>` 폴더 생성(context/assets/outputs 시드 + sop 렌더 레인 자동 배치), 기존 폴더 추가
-3. **파이프라인 대시보드** — `context/workflow-status.md` 파싱, 파운데이션 파일 상태 표시
-4. **단계 실행** — 각 버튼이 클라이언트 폴더에서 `claude -p`를 헤드리스로 실행하고 로그를 스트리밍:
-   캘린더 → 카피 팬아웃 → 릴스/스토리보드 → 비주얼 브리프/생성(2회 호출 프로토콜) → 컴플라이언스 → 월말 리뷰.
-   **단계 사이의 승인 게이트는 이 앱이 담당합니다** — 산출물 탭에서 검토 후 다음 버튼을 누르는 행위가 곧 승인입니다.
-5. **대화형 모드** — 온보딩 인터뷰 등 질문이 많은 단계는 "디렉터와 대화" 버튼으로 시스템 터미널에서 `/content-director` 실행
-6. **산출물 뷰어** — outputs/ 전 레인의 마크다운·이미지 미리보기 (컴플라이언스 판정표 포함)
+단일 워크스페이스 4존: **좌측 레일**(클라이언트 아바타) / **채널 허브 스트립** / **타임라인⇄칸반 보드** / **게이트 바** + 우측 **디렉터 독**.
+
+1. **출근 준비 마법사 — "설치했을 때 적용"** — Claude/Codex/ima2 CLI 점검·설치, 스킬 17종 → `~/.claude/skills/`, 에이전트 4종 → `~/.claude/agents/`, Codex OAuth(브라우저)·MCP 등록, ima2 셋업.
+2. **채널 허브** — 채널별 카드: 이번 달 큐, 5단계 진행 미터, 주차 스파크바, WARN/BLOCK 닷, 발행 경로(Blotato 자동/연결 필요/수동). 카드 클릭 = 보드 필터 + 발행 와이어.
+3. **라이브 보드** — 캘린더의 포스트가 기획→카피→비주얼→검수→발행준비를 흐르는 칸반/타임라인. **카드는 드래그로 옮기지 않습니다** — 팀이 파일을 만들면 fs 감시가 잡아 카드가 FLIP으로 스스로 이동합니다. 카드의 진실은 `context/calendar-index.json`(캘린더 생성 시 자동 산출, 마크다운 형식 무관) → 없으면 md 파서 폴백.
+4. **게이트 바** — 8노드 스테퍼 + 상황별 CTA 1개. 승인 게이트는 **도장 버튼을 600ms 길게 눌러** 찍고(`context/gates.json` 영속, 캘린더 재생성 시 자동 무효화), 컴플라이언스 게이트는 WARN 서명·BLOCK 잠금.
+5. **디렉터 독** — 앱 내 채팅(세션 유지, 카드/파일 드래그로 컨텍스트 첨부), 실행 로그, 포스트 인스펙터(단계별 증거 파일 미리보기).
+6. **수동 발행 체크리스트** — 네이버 등 수동 채널: [복사] 버튼으로 포스트 본문을 클립보드에 → 에디터 붙여넣기 → 발행함 체크(`context/publish-log.json` 기록, 카드에 '발행됨' 표시).
+7. **엔진·모델 선택** — 설정 → 엔진: Claude(대화+파이프라인)와 Codex(대화)의 모델을 각각 지정 (`sonnet`/`opus`/`haiku`, `gpt-5.6-sol` 등 자유 입력).
 
 ## 개발 실행
 
@@ -52,13 +49,19 @@ npm run dist:mac      # macOS DMG (macOS에서)
 
 ```
 desktop/
-├── main.js            Electron 메인 (IPC 라우팅)
+├── main.js            Electron 메인 (IPC 라우팅, fs 감시 → board:update 푸시, 클립보드)
 ├── preload.js         contextBridge (renderer는 Node 접근 불가)
 ├── lib/
-│   ├── setup.js       환경 점검·스킬 설치·Codex OAuth·MCP 등록
+│   ├── proc.js        공용 실행기 (PATH 보강, 플랫폼별 인용, IPC-safe 결과)
+│   ├── setup.js       환경 점검·스킬 설치·Codex OAuth·MCP 등록·ima2
 │   ├── workspace.js   클라이언트 폴더 CRUD + workflow-status 파싱 + 산출물 리더
-│   └── pipeline.js    단계별 claude -p 러너 + 대화형 터미널 런처
-└── src/               UI (탭: 대시보드 / 산출물 / 로그)
+│   ├── board.js       캘린더 파서(index-json 우선) + 포스트별 단계 추론 + 채널 집계
+│   ├── gates.js       승인 도장 영속 + 8노드 게이트 계산 (캘린더 해시 무효화)
+│   ├── publishlog.js  수동 발행 기록 (publish-log.json)
+│   ├── pipeline.js    단계별 claude -p 러너 + 엔진별 터미널 런처
+│   ├── chat.js        앱 내 디렉터 대화 (claude --resume / codex exec resume)
+│   └── config.js      엔진·모델·세션 설정 (~/.social-ai-team/settings.json)
+└── src/               온에어 데스크 UI (4존 + 오버레이, vanilla JS)
 ```
 
 패키징 시 리포의 `skills/`, `.claude/agents/`, `sop/`가 `resources/payload/`로 번들되어 설치 마법사가 이를 `~/.claude`와 클라이언트 폴더에 적용합니다.

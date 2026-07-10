@@ -28,6 +28,10 @@ contextBridge.exposeInMainWorld('api', {
   channels: {
     check: () => ipcRenderer.invoke('channels:check'),
   },
+  pub: {
+    mark: (dir, uid, on) => ipcRenderer.invoke('pub:mark', dir, uid, on),
+    copy: (dir, rel, topic) => ipcRenderer.invoke('pub:copy', dir, rel, topic),
+  },
   pipe: {
     runStage: (dir, stage, opts) => ipcRenderer.invoke('pipe:runStage', dir, stage, opts),
     stop: () => ipcRenderer.invoke('pipe:stop'),

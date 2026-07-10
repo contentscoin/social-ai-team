@@ -1,5 +1,5 @@
 // Social AI Team Desktop — Electron main process
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
 const path = require('path');
 const setup = require('./lib/setup');
 const workspace = require('./lib/workspace');
@@ -10,6 +10,7 @@ const config = require('./lib/config');
 const chat = require('./lib/chat');
 const board = require('./lib/board');
 const gates = require('./lib/gates');
+const publishlog = require('./lib/publishlog');
 
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch { /* dep missing in dev */ }
@@ -162,6 +163,35 @@ ipcMain.handle('gates:approve', (_e, dir, entry) => {
     gates.approve(dir, { ...entry, calendarHash: b.calendarHash });
     return gates.computeGates(b, gates.load(dir));
   } catch (e) { return { nodes: [], current: 0, approvals: [], error: String(e && e.message || e) }; }
+});
+
+// ---- Manual publish (네이버 등) --------------------------------------------------
+ipcMain.handle('pub:mark', (_e, dir, uid, on) => {
+  const r = publishlog.mark(dir, uid, on);
+  setTimeout(pushBoard, 200);
+  return r;
+});
+// 파일에서 해당 포스트 블록을 추출해 클립보드에 복사 (네이버 에디터 붙여넣기용)
+ipcMain.handle('pub:copy', (_e, dir, rel, topic) => {
+  try {
+    const abs = path.resolve(dir, rel);
+    if (!abs.startsWith(path.resolve(dir) + path.sep)) return { ok: false, error: 'path escape' };
+    const text = fs.readFileSync(abs, 'utf8');
+    // 토픽이 등장하는 블록(직전 구분선/앵커부터 다음 구분선/앵커까지)을 잘라낸다
+    let block = text;
+    const idx = topic ? text.indexOf(String(topic).slice(0, 20)) : -1;
+    if (idx >= 0) {
+      const anchors = /^(---+|#{1,3}\s|POST\s*\d+|[A-Z]{1,2}-\d+\b)/gm;
+      let start = 0, end = text.length, m;
+      while ((m = anchors.exec(text))) {
+        if (m.index <= idx) start = m.index;
+        else { end = m.index; break; }
+      }
+      block = text.slice(start, end).trim();
+    }
+    clipboard.writeText(block);
+    return { ok: true, chars: block.length };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 
 // ---- Channel connection check (Blotato MCP presence) ----------------------------

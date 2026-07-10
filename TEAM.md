@@ -216,6 +216,10 @@ bash install.sh
 
 ## 9. 시작하기
 
+**데스크톱 앱 (권장)**: [Releases](https://github.com/contentscoin/social-ai-team/releases)에서 설치본(Windows/macOS/Linux)을 받으세요 — "온에어 데스크" UI로 팀 설치·클라이언트 관리·라이브 칸반 보드·승인 도장·수동 발행 체크리스트까지 전부 앱에서 처리하며, 자동 업데이트됩니다. 상세: `desktop/README.md`.
+
+**터미널 (Claude Code CLI)**:
+
 ```bash
 mkdir my-client && cd my-client
 # 이 폴더에서 Claude Code를 열고:

@@ -257,11 +257,14 @@ function buildBoard(dir) {
   });
   // 채널-ID 캘린더는 IG-1과 TH-1처럼 번호가 겹친다 — 카드 식별은 uid로
   const seenUid = new Set();
+  let publishLog = {};
+  try { publishLog = (JSON.parse(read(path.join(dir, 'context', 'publish-log.json'))) || {}).published || {}; } catch { /* none */ }
   for (const c of cards) {
     let uid = `${c.channel}-${c.n}`;
     while (seenUid.has(uid)) uid += 'x';
     seenUid.add(uid);
     c.uid = uid;
+    c.published = !!publishLog[uid];
   }
 
   // channel aggregates

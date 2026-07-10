@@ -192,7 +192,11 @@ function renderChannels() {
     tile.style.color = color;
     $('.cc-name', el).textContent = CH_NAME[ch.key] || ch.key;
     const badge = $('.cc-badge', el);
-    if (ch.publishRoute === 'manual') { badge.textContent = '수동 발행'; }
+    if (ch.publishRoute === 'manual') {
+      badge.textContent = '수동 발행'; badge.style.cursor = 'pointer'; badge.style.color = 'var(--warn)';
+      badge.title = '수동 발행 체크리스트 열기';
+      badge.onclick = (e) => { e.stopPropagation(); openPublishPanel(ch.key); };
+    }
     else if (S.blotato) { badge.textContent = 'Blotato 자동'; badge.style.color = 'var(--ok)'; }
     else { badge.textContent = '연결 필요'; badge.style.color = 'var(--warn)'; el.classList.add('unplugged'); }
     $('.cc-count', el).textContent = ch.posts;
@@ -282,6 +286,11 @@ function makeCard(p) {
   $('.pc-format', el).textContent = p.format || '—';
   const v = $('.pc-verdict', el);
   if (p.verdict) v.classList.add(p.verdict); else v.remove();
+  if (p.published) {
+    const pub = document.createElement('span');
+    pub.className = 'chip tiny'; pub.textContent = '발행됨'; pub.style.color = 'var(--ok)'; pub.style.borderColor = 'var(--ok)';
+    $('.pc-row3', el).insertBefore(pub, $('.pc-dots', el));
+  }
   const idx = S.board.stages.indexOf(p.stage);
   $('.pc-dots', el).innerHTML = S.board.stages.map((s, i) =>
     `<span class="stage-dot ${i <= idx ? 'done' : ''} ${i === idx ? 'cur' : ''}" title="${STAGE_LABEL[s]}"></span>`).join('');
@@ -731,6 +740,51 @@ function openInspector(p) {
     e.preventDefault();
     const r = await window.api.ws.readFile(S.client.dir, a.dataset.rel);
     $('#insp-preview').innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}" style="max-width:100%;border-radius:8px">` : `<pre style="white-space:pre-wrap;font-size:11px;max-height:220px;overflow-y:auto;background:var(--card);border-radius:8px;padding:10px">${esc(r.text.slice(0, 6000))}</pre>`) : '';
+  };
+}
+
+// ---- manual publish panel (수동 발행 체크리스트 — 독 영역 사용) ------------------------------
+function openPublishPanel(chKey) {
+  $('#dock-chat').classList.add('hidden'); $('#dock-log').classList.add('hidden');
+  $$('#dock-seg button').forEach((b) => b.classList.remove('active'));
+  const box = $('#dock-inspector');
+  box.classList.remove('hidden');
+  S.inspectorN = null;
+  const posts = S.board.posts.filter((p) => p.channel === chKey);
+  const laneFile = (p) => (S.board.lanes[p.lane] || [])[0];
+  const ready = posts.filter((p) => p.stage === 'ready' || p.stage === 'review');
+  box.innerHTML = `
+    <div class="insp-head"><button class="icon-btn" id="insp-back"><svg><use href="#i-back"/></svg></button>
+      <span class="insp-topic">${esc(CH_NAME[chKey] || chKey)} 수동 발행 체크리스트</span></div>
+    <p class="muted small" style="margin-bottom:10px">본문 복사 → ${chKey === 'naver' ? '네이버 에디터' : '플랫폼 에디터'}에 붙여넣기 → 발행 후 체크. 체크 기록은 publish-log.json에 남고 카드에 '발행됨'이 표시됩니다.</p>
+    ${posts.length ? '' : '<p class="muted">이 채널의 포스트가 없습니다</p>'}
+    ${posts.map((p) => `
+      <div class="verdict-row" style="gap:8px">
+        <input type="checkbox" class="pub-check" data-uid="${esc(p.uid)}" ${p.published ? 'checked' : ''}>
+        <b>${cardId(p)}</b>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.topic)}</span>
+        ${p.stage !== 'ready' ? `<span class="chip tiny" style="color:var(--warn)">${STAGE_LABEL[p.stage]}</span>` : ''}
+        <button class="chip pub-copy" data-uid="${esc(p.uid)}">복사</button>
+      </div>`).join('')}
+    <div class="insp-actions">
+      <button id="pub-folder">레인 폴더 열기</button>
+      <span class="muted small" style="align-self:center">발행 대기 ${ready.filter((p) => !p.published).length}건</span>
+    </div>`;
+  $('#insp-back').onclick = () => switchDock('chat');
+  $('#pub-folder').onclick = () => {
+    const lane = posts[0] ? posts[0].lane : 'naver';
+    window.api.ws.openFolder(S.client.dir + '/outputs/' + lane);
+  };
+  for (const c of $$('.pub-check', box)) c.onchange = async () => {
+    await window.api.pub.mark(S.client.dir, c.dataset.uid, c.checked);
+    toast(c.checked ? '발행 기록 완료' : '발행 기록 해제');
+  };
+  for (const btn of $$('.pub-copy', box)) btn.onclick = async () => {
+    const p = posts.find((x) => x.uid === btn.dataset.uid);
+    const f = laneFile(p);
+    if (!f) { toast('산출 파일이 없습니다'); return; }
+    const r = await window.api.pub.copy(S.client.dir, f.rel, p.topic);
+    toast(r.ok ? `본문 복사 완료 (${r.chars}자) — 에디터에 붙여넣으세요` : '복사 실패: ' + r.error);
   };
 }
 
