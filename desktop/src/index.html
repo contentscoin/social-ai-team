@@ -24,6 +24,8 @@
     <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M12 3a3.5 3.5 0 013.5 3.5c0 2-1.4 3-1.4 4.5h-4.2c0-1.5-1.4-2.5-1.4-4.5A3.5 3.5 0 0112 3z" fill="currentColor"/><path d="M5 15a2 2 0 012-2h10a2 2 0 012 2v2H5v-2zM4 20h16" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4h4" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M12 3a9 9 0 108.5 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M21 3v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 9l5 3-5 3z" fill="currentColor"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
 
   <!-- ══ 좌측 레일 ══ -->
@@ -79,6 +81,7 @@
       <div id="gate-steps"></div>
       <div id="gate-actions">
         <button id="gate-checklist" class="chip">체크리스트</button>
+        <button id="gate-auto" class="chip" title="승인 게이트 앞까지 자동으로 진행합니다"><svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-auto"/></svg> 오토파일럿</button>
         <button id="gate-cta" class="cta" disabled><svg><use href="#i-play"/></svg><span>—</span></button>
       </div>
     </footer>
@@ -90,6 +93,7 @@
       <div class="seg mini" id="dock-seg">
         <button data-dock="chat" class="active">디렉터</button>
         <button data-dock="log">로그</button>
+        <button data-dock="history">기록</button>
       </div>
       <span id="dock-engine" class="muted small">Claude</span>
       <button id="chat-reset" class="chip">새 대화</button>
@@ -100,6 +104,7 @@
       <div id="chat-input-row">
         <textarea id="chat-input" rows="2" placeholder="디렉터에게 지시… (카드를 여기로 드래그하면 컨텍스트가 붙습니다)"></textarea>
         <button id="btn-chat-send">보내기</button>
+        <button id="chat-stop" class="hidden" title="디렉터 턴 중지">중지</button>
       </div>
     </div>
     <div id="dock-log" class="dock-body hidden">
@@ -109,6 +114,7 @@
       </div>
       <pre id="log-pane"></pre>
     </div>
+    <div id="dock-history" class="dock-body hidden"></div>
     <div id="dock-inspector" class="dock-body hidden"></div>
   </aside>
 

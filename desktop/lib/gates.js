@@ -17,14 +17,24 @@ const NODES = [
 
 function gatesPath(dir) { return path.join(dir, 'context', 'gates.json'); }
 function load(dir) {
-  try { return JSON.parse(fs.readFileSync(gatesPath(dir), 'utf8')); } catch { return { approvals: [] }; }
+  const p = gatesPath(dir);
+  try { return JSON.parse(fs.readFileSync(p, 'utf8')); }
+  catch {
+    // 승인 도장은 이 앱의 핵심 안전 기록 — 깨졌으면 백업하고 새로 시작 (조용한 소실 금지)
+    if (fs.existsSync(p)) { try { fs.renameSync(p, p + '.corrupt-' + Date.now()); } catch { /* best effort */ } }
+    return { approvals: [] };
+  }
 }
 function approve(dir, entry) {
   const g = load(dir);
   g.approvals = g.approvals.filter((a) => a.node !== entry.node);
   g.approvals.push({ ...entry, approvedAt: new Date().toISOString() });
   fs.mkdirSync(path.join(dir, 'context'), { recursive: true });
-  fs.writeFileSync(gatesPath(dir), JSON.stringify(g, null, 2));
+  // 원자적 교체 — 크래시가 도장 기록을 통째로 날리지 않게
+  const p = gatesPath(dir);
+  const tmp = p + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(g, null, 2));
+  fs.renameSync(tmp, p);
   return g;
 }
 // stamps from a different calendar version are stale — a regenerated month must be re-approved

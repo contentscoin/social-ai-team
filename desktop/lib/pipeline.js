@@ -4,6 +4,7 @@
 const { spawn } = require('child_process');
 const { runCmd, envWithPath, isWin } = require('./proc');
 const config = require('./config');
+const { makeParser, finalText } = require('./stream');
 
 const isMac = process.platform === 'darwin';
 
@@ -68,18 +69,46 @@ function runStage(dir, stage, opts = {}, onLine) {
   if (current) return Promise.resolve({ ok: false, code: -1, out: '다른 단계가 이미 실행 중입니다', tail: '다른 단계가 이미 실행 중입니다' });
 
   const extra = opts.extraContext ? `\n\n추가 지시: ${opts.extraContext}` : '';
-  // 프롬프트는 stdin으로 (Windows 개행 안전 — proc.js 참조)
-  const args = ['-p', '--permission-mode', 'acceptEdits', '--add-dir', dir];
+  // 프롬프트는 stdin으로 (Windows 개행 안전 — proc.js 참조).
+  // stream-json으로 실행해 도구 활동을 읽을 수 있는 로그로, 최종 비용/소요를 결과에 싣는다.
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--add-dir', dir];
   const model = config.getModels().claude; // 파이프라인은 항상 Claude — 모델만 선택 적용
   if (model) args.push('--model', model);
   const stdinText = spec.prompt + extra;
   const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
-  const runOnce = (env) => runCmd('claude', args, onLine, {
+  let parser;
+  const prettyFeed = () => {
+    // NDJSON 이벤트를 운영자가 읽는 활동 라인으로 변환해 onLine에 흘린다
+    parser = makeParser((ev) => {
+      if (!onLine) return;
+      if (ev.kind === 'start') onLine(`[시작] 모델 ${ev.model || '(기본)'}`);
+      else if (ev.kind === 'tool') onLine(`▸ ${ev.name}${ev.target ? ' — ' + ev.target : ''}`);
+      else if (ev.kind === 'text') ev.text.split(/\r?\n/).filter(Boolean).forEach((l) => onLine(l));
+      else if (ev.kind === 'done') onLine(`[완료] ${typeof ev.costUsd === 'number' ? '$' + ev.costUsd.toFixed(4) + ' · ' : ''}${ev.durationMs ? Math.round(ev.durationMs / 1000) + 's' : ''}`);
+      else if (ev.kind === 'raw') onLine(ev.text);
+    });
+    return parser;
+  };
+  const runOnce = (env) => runCmd('claude', args, prettyFeed(), {
     cwd: dir,
     env,
     stdinText,
     onSpawn: (child) => { current = child; },
-  }).then((r) => { current = null; return r; });
+  }).then((r) => {
+    current = null;
+    // 최종 result 이벤트에서 비용/소요/응답 텍스트를 결과에 부착
+    const st = parser && parser.state;
+    const resultText = st ? finalText(st) : '';
+    const fin = st && st.final;
+    return {
+      ...r,
+      ok: r.ok && !(fin && fin.is_error),
+      resultText,
+      costUsd: fin && fin.total_cost_usd,
+      durationMs: fin && fin.duration_ms,
+      tail: resultText ? resultText.slice(-500) : r.tail,
+    };
+  });
 
   return runOnce().then(async (r) => {
     if (!r.ok && AUTH_FAIL.test(r.out)) {
@@ -112,26 +141,47 @@ function stopCurrent() {
 
 // Interactive stages (brand onboarding interview, free-form direction) — open a real terminal.
 // `engineOrCmd`: 'claude' | 'codex' picks the default command; a full string overrides it.
-function openInteractiveTerminal(dir, engineOrCmd) {
+// onError(msg): 비동기 spawn 실패를 UI로 알리는 콜백 (main.js가 토스트/로그로 중계)
+function openInteractiveTerminal(dir, engineOrCmd, onError) {
   let cmd;
   if (engineOrCmd === 'codex') cmd = 'codex';
   else if (engineOrCmd === 'claude' || !engineOrCmd) cmd = 'claude "/content-director"';
   else cmd = engineOrCmd; // explicit command string (e.g. "ima2 setup")
   const env = envWithPath();
-  if (isWin) {
-    // `start`의 인용 규칙이 spawn 인자 이스케이프와 충돌하므로 임시 .cmd 스크립트를 경유한다.
-    const fs = require('fs');
-    const os = require('os');
-    const path = require('path');
-    const script = path.join(os.tmpdir(), `sat-terminal-${Date.now()}.cmd`);
-    fs.writeFileSync(script, `@echo off\r\ncd /d "${dir}"\r\n${cmd}\r\n`);
-    spawn('cmd', ['/c', 'start', '', 'cmd', '/k', script], { detached: true, shell: false, env });
-  } else if (isMac) {
-    const script = `tell application "Terminal" to do script "cd ${JSON.stringify(dir)} && ${cmd}"`;
-    spawn('osascript', ['-e', script], { detached: true, env });
-  } else {
-    const term = process.env.TERMINAL || 'x-terminal-emulator';
-    spawn(term, ['-e', `bash -lc 'cd ${JSON.stringify(dir)} && ${cmd}; exec bash'`], { detached: true, env });
+  const report = (e) => { try { onError && onError(`터미널 열기 실패: ${e && e.message || e}`); } catch { /* no-op */ } };
+  try {
+    if (isWin) {
+      // `start`의 인용 규칙이 spawn 인자 이스케이프와 충돌하므로 임시 .cmd 스크립트를 경유한다.
+      // cmd.exe는 배치 파일을 시스템 코드페이지(한국어 PC는 CP949)로 읽으므로 chcp 65001을
+      // 먼저 선언해야 한글 경로가 안 깨진다. %는 배치 확장을 막게 %%로 이스케이프.
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const script = path.join(os.tmpdir(), `sat-terminal-${Date.now()}.cmd`);
+      const dirEsc = dir.replace(/%/g, '%%');
+      fs.writeFileSync(script, `@echo off\r\nchcp 65001 >nul\r\ncd /d "${dirEsc}"\r\n${cmd}\r\n`);
+      const p = spawn('cmd', ['/c', 'start', '', 'cmd', '/k', script], { detached: true, shell: false, env });
+      p.on('error', report);
+      setTimeout(() => { try { fs.unlinkSync(script); } catch { /* in use */ } }, 60_000);
+    } else if (isMac) {
+      // AppleScript 문자열 안에 셸 명령을 넣으므로 두 겹 이스케이프가 필요하다:
+      // 1) 셸용 — 경로는 단일따옴표로, 2) AppleScript용 — 백슬래시와 큰따옴표를 \로.
+      const shellDir = `'${String(dir).replace(/'/g, `'\\''`)}'`;
+      const shellLine = `cd ${shellDir} && ${cmd}`;
+      const asEsc = shellLine.replace(/[\\"]/g, (m) => '\\' + m);
+      const script = `tell application "Terminal" to do script "${asEsc}"`;
+      const p = spawn('osascript', ['-e', script], { detached: true, env });
+      p.on('error', report);
+    } else {
+      const term = process.env.TERMINAL || 'x-terminal-emulator';
+      const shellDir = `'${String(dir).replace(/'/g, `'\\''`)}'`;
+      const inner = `cd ${shellDir} && ${cmd}; exec bash`;
+      const p = spawn(term, ['-e', `bash -lc '${inner.replace(/'/g, `'\\''`)}'`], { detached: true, env });
+      p.on('error', report);
+    }
+  } catch (e) {
+    report(e);
+    return { ok: false, error: String(e && e.message || e) };
   }
   return { ok: true };
 }

@@ -50,7 +50,17 @@ contextBridge.exposeInMainWorld('api', {
   },
   chat: {
     send: (dir, msg) => ipcRenderer.invoke('chat:send', dir, msg),
+    stop: () => ipcRenderer.invoke('chat:stop'),
+    history: (dir) => ipcRenderer.invoke('chat:history', dir),
     reset: (dir) => ipcRenderer.invoke('chat:reset', dir),
+  },
+  auto: {
+    run: (dir) => ipcRenderer.invoke('auto:run', dir),
+    stop: () => ipcRenderer.invoke('auto:stop'),
+    status: () => ipcRenderer.invoke('auto:status'),
+  },
+  hist: {
+    list: (dir) => ipcRenderer.invoke('hist:list', dir),
   },
   update: {
     version: () => ipcRenderer.invoke('update:version'),
@@ -61,6 +71,8 @@ contextBridge.exposeInMainWorld('api', {
   onUpdate: (cb) => subscribe('update', cb),
   onBoard: (cb) => subscribe('board:update', cb),
   onStage: (cb) => subscribe('stage', cb),
+  onChatStream: (cb) => subscribe('chat:stream', cb),
+  onAuto: (cb) => subscribe('auto', cb),
 });
 
 // 구독 해제자를 반환 — 재구독 패턴에서 리스너가 누적되지 않게

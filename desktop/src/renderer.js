@@ -21,6 +21,67 @@ const relTime = (ms) => {
   if (d < 86400e3) return Math.floor(d / 3600e3) + '시간 전'; return Math.floor(d / 86400e3) + '일 전';
 };
 const fmtDur = (ms) => { const s = Math.floor(ms / 1000); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const fmtCost = (usd) => (typeof usd === 'number' && usd > 0 ? '$' + (usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)) : '');
+
+// 안전 마크다운 렌더러 — 항상 esc() 먼저, 태그는 우리가 만든 것만. 카피/캘린더 md 미리보기용.
+function md(src) {
+  const inline = (s) => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2">$1</a>');
+  const lines = String(src || '').split(/\r?\n/);
+  let out = '', code = false, list = null, table = null, para = [];
+  const flushPara = () => { if (para.length) { out += `<p>${para.map(inline).join('<br>')}</p>`; para = []; } };
+  const flushList = () => { if (list) { out += `</${list}>`; list = null; } };
+  const flushTable = () => { if (table) { out += '</tbody></table></div>'; table = null; } };
+  for (const raw of lines) {
+    const line = raw;
+    if (/^```/.test(line)) { flushPara(); flushList(); flushTable(); code = !code; out += code ? '<pre><code>' : '</code></pre>'; continue; }
+    if (code) { out += esc(line) + '\n'; continue; }
+    const h = line.match(/^(#{1,4})\s+(.*)/);
+    if (h) { flushPara(); flushList(); flushTable(); out += `<h${h[1].length + 2}>${inline(h[2])}</h${h[1].length + 2}>`; continue; }
+    if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) { flushPara(); flushList(); flushTable(); out += '<hr>'; continue; }
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      flushPara(); flushList();
+      const cells = line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+      if (cells.every((c) => /^:?-{2,}:?$/.test(c))) continue; // 헤더 구분선
+      if (!table) { table = true; out += `<div class="md-scroll"><table><tbody>`; }
+      out += `<tr>${cells.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`;
+      continue;
+    }
+    flushTable();
+    const li = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (li) { flushPara(); const want = /^\s*\d/.test(line) ? 'ol' : 'ul'; if (list !== want) { flushList(); out += `<${want}>`; list = want; } out += `<li>${inline(li[1])}</li>`; continue; }
+    flushList();
+    if (!line.trim()) { flushPara(); continue; }
+    para.push(line);
+  }
+  flushPara(); flushList(); flushTable();
+  if (code) out += '</code></pre>';
+  return out;
+}
+// 텍스트 미리보기 — .md는 렌더링, 그 외는 pre (모든 미리보기 패널이 공유)
+function previewHTML(r, rel) {
+  if (!r || !r.ok) return `<p class="muted">${esc((r && r.error) || '읽기 실패')}</p>`;
+  if (r.kind === 'image') return `<img src="${r.dataUrl}" class="zoomable">`;
+  if (/\.md$/i.test(rel || '')) return `<div class="md">${md(r.text)}</div>`;
+  return `<pre>${esc(r.text)}</pre>`;
+}
+// 미리보기 이미지 클릭 → 라이트박스 확대
+document.addEventListener('click', (e) => {
+  const img = e.target.closest && e.target.closest('img.zoomable');
+  if (img) { const lb = $('#lightbox'); lb.innerHTML = `<img src="${img.src}">`; lb.classList.remove('hidden'); }
+  else if (e.target.closest && e.target.closest('#lightbox')) $('#lightbox').classList.add('hidden');
+});
+// 키보드 조작 — div/article로 만든 버튼형 요소에 Enter/Space 활성화
+function pressable(el) {
+  el.tabIndex = 0;
+  if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+  el.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); el.click(); }
+  });
+}
 
 // ---- state --------------------------------------------------------------------
 const S = {
@@ -28,7 +89,7 @@ const S = {
   gates: null, engine: 'claude', view: 'timeline',
   running: null, runStart: 0, lastRunStart: {}, runTimer: null,
   filter: null, chips: [], chatBusy: false, env: null, blotato: false,
-  tickers: {}, logLines: 0,
+  viewDirty: { timeline: false, kanban: false }, auto: false, monthCost: 0, selectSeq: 0,
 };
 const STAGE_LABEL = { planned: '기획', copy: '카피', visual: '비주얼/영상', review: '검수', ready: '발행준비' };
 const STAGE2COL = { calendar: 'planned', copy: 'copy', shortform: 'visual', visuals: 'visual', 'visuals-generate': 'visual', compliance: 'review', review: 'ready' };
@@ -37,9 +98,13 @@ const CH_MONO = { instagram: 'IG', facebook: 'FB', linkedin: 'IN', threads: 'TH'
 
 // ---- toast / popover -------------------------------------------------------------
 function toast(msg) {
+  const box = $('#toasts');
+  // 중복/폭주 방지 — 같은 문구는 갱신만, 최대 4개 유지
+  for (const t of box.children) if (t.textContent === msg) { t.remove(); break; }
+  while (box.children.length >= 4) box.firstChild.remove();
   const d = document.createElement('div');
   d.className = 'toast'; d.textContent = msg;
-  $('#toasts').appendChild(d);
+  box.appendChild(d);
   setTimeout(() => d.remove(), 4200);
 }
 let popTarget = null;
@@ -64,7 +129,15 @@ function closeOverlay() {
   $('#overlay').classList.add('hidden'); $$('#overlay > *').forEach((s) => s.classList.add('hidden'));
 }
 $('#overlay').addEventListener('click', (e) => { if (e.target === $('#overlay')) closeOverlay(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hidePopover(); closeOverlay(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  hidePopover();
+  const lb = $('#lightbox');
+  if (lb && !lb.classList.contains('hidden')) { lb.classList.add('hidden'); return; }
+  // 설정 마법사는 ESC로 닫히지 않는다 — 건너뛰기 버튼만이 wizardDone을 기록하므로
+  if (!$('#wizard').classList.contains('hidden')) return;
+  closeOverlay();
+});
 
 // ---- rail: clients ------------------------------------------------------------------
 async function refreshClients() {
@@ -76,10 +149,11 @@ async function refreshClients() {
     a.textContent = c.name.slice(0, 2).toUpperCase();
     a.title = c.name;
     a.onclick = () => {
-      if (S.running) { toast('실행 중에는 클라이언트를 전환할 수 없습니다'); return; }
+      if (S.running || S.auto) { toast('실행 중에는 클라이언트를 전환할 수 없습니다'); return; }
       if (S.chatBusy) { toast('디렉터 응답을 기다리는 중에는 전환할 수 없습니다'); return; }
       selectClient(c);
     };
+    pressable(a);
     box.appendChild(a);
   }
 }
@@ -119,13 +193,30 @@ $('#rail-term').onclick = () => S.client && window.api.pipe.openTerminal(S.clien
 $('#rail-settings').onclick = () => openSettings();
 
 async function selectClient(c) {
+  const seq = S.selectSeq = (S.selectSeq || 0) + 1; // 빠른 연속 전환 시 낡은 continuation이 상태를 덮지 않게
   S.client = c; S.filter = null; S.prevStages = new Map();
   $('#tb-name').textContent = c.name;
   $('#tb-path').textContent = c.dir;
   $('#rail-folder').disabled = $('#rail-term').disabled = false;
   $('#chat-log').innerHTML = ''; S.chips = []; renderChips();
   await refreshClients();
+  if (seq !== S.selectSeq) return;
+  // 이 클라이언트의 지난 대화 복원 — CLI 세션은 살아있는데 화면만 비는 desync 방지
+  try {
+    const hist = await window.api.chat.history(c.dir);
+    if (seq !== S.selectSeq) return;
+    for (const m of (hist || []).slice(-40)) addMsg(m.role === 'user' ? 'user' : (m.ok === false ? 'err' : 'dir'), m.text);
+  } catch { /* 기록 없음 */ }
+  // 승인 시트의 "이번 실행 산출물" 컷오프를 재시작 후에도 유지
+  try {
+    const h = await window.api.hist.list(c.dir);
+    if (seq !== S.selectSeq) return;
+    S.lastRunStart = {};
+    for (const r of (h && h.runs || []).slice().reverse()) if (r.kind === 'stage' && r.stage && !S.lastRunStart[r.stage]) S.lastRunStart[r.stage] = r.startedAt;
+    S.monthCost = h ? h.monthCost : 0;
+  } catch { S.lastRunStart = {}; }
   const w = await window.api.ws.watch(c.dir);
+  if (seq !== S.selectSeq) return;
   clearInterval(S.pollTimer);
   if (!w || !w.watching) {
     // 파일 감시 실패(네트워크 드라이브 등) — 15초 폴링으로 라이브 보드 유지
@@ -139,6 +230,7 @@ async function selectClient(c) {
 for (const b of $$('#view-seg button')) b.onclick = () => {
   S.view = b.dataset.view;
   $$('#view-seg button').forEach((x) => x.classList.toggle('active', x === b));
+  if (S.board && S.viewDirty[S.view]) renderBoardViews(false); // 숨어 있던 뷰가 낡았으면 재빌드
   renderHero(); // 뷰 표시/숨김의 단일 진실 공급원 (히어로 상태 존중)
 };
 for (const b of $$('#engine-seg button')) b.onclick = async () => {
@@ -213,6 +305,7 @@ function renderChannels() {
       badge.textContent = '수동 발행'; badge.style.cursor = 'pointer'; badge.style.color = 'var(--warn)';
       badge.title = '수동 발행 체크리스트 열기';
       badge.onclick = (e) => { e.stopPropagation(); openPublishPanel(ch.key); };
+      pressable(badge);
     }
     else if (S.blotato) { badge.textContent = 'Blotato 자동'; badge.style.color = 'var(--ok)'; }
     else { badge.textContent = '연결 필요'; badge.style.color = 'var(--warn)'; el.classList.add('unplugged'); }
@@ -227,6 +320,7 @@ function renderChannels() {
     el.classList.toggle('focus', S.filter === ch.key);
     el.classList.toggle('dim', !!S.filter && S.filter !== ch.key);
     el.onclick = () => setFilter(S.filter === ch.key ? null : ch.key);
+    pressable(el);
     box.appendChild(el);
   }
   const ghost = document.createElement('button');
@@ -322,15 +416,12 @@ function makeCard(p) {
   if (S.running && STAGE2COL[S.running] === p.stage) el.classList.add('running-card');
   if (S.filter && p.channel !== S.filter) el.classList.add('dim');
   el.onclick = () => openInspector(p);
+  pressable(el);
   el.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-card', JSON.stringify({ uid: p.uid, id: cardId(p), topic: p.topic, stage: p.stage })));
   return el;
 }
-function renderBoardViews(flip, moved) {
-  const b = S.board; if (!b) return;
-  const rects = new Map();
-  const flipRoot = S.view === 'kanban' ? '#kanban ' : '#timeline ';
-  if (flip) for (const el of $$(flipRoot + '.post-card')) rects.set(el.dataset.key, el.getBoundingClientRect());
-  // 타임라인
+function renderTimeline() {
+  const b = S.board;
   const tl = $('#timeline'); tl.innerHTML = '';
   const weeks = {};
   for (const p of b.posts) (weeks[p.week || '?'] = weeks[p.week || '?'] || []).push(p);
@@ -345,7 +436,9 @@ function renderBoardViews(flip, moved) {
     for (const p of posts) grid.appendChild(makeCard(p));
     sec.appendChild(grid); tl.appendChild(sec);
   }
-  // 칸반
+}
+function renderKanban() {
+  const b = S.board;
   const kb = $('#kanban'); kb.innerHTML = '';
   for (const s of b.stages) {
     const posts = b.posts.filter((p) => p.stage === s);
@@ -369,24 +462,35 @@ function renderBoardViews(flip, moved) {
       toast('카드 상태는 파일 증거로 자동 계산됩니다 — 디렉터에게 작업을 지시하세요');
     });
   }
-  // FLIP — 보이는 뷰만 (타임라인/칸반이 같은 data-key를 공유하므로 스코프 필수)
+}
+function renderBoardViews(flip, moved) {
+  const b = S.board; if (!b) return;
+  const rects = new Map();
+  const root = S.view === 'kanban' ? '#kanban ' : '#timeline ';
+  if (flip) for (const el of $$(root + '.post-card')) rects.set(el.dataset.key, el.getBoundingClientRect());
+  // 보이는 뷰만 리빌드 — 숨은 뷰는 dirty 마킹 후 전환 시 리빌드 (50+ 카드에서 2배 작업 방지)
+  if (S.view === 'kanban') { renderKanban(); S.viewDirty.timeline = true; }
+  else { renderTimeline(); S.viewDirty.kanban = true; }
+  S.viewDirty[S.view] = false;
+  // FLIP — 읽기(rect)를 전부 모은 뒤 쓰기(transform) — 카드당 강제 리플로우 방지
   if (flip && rects.size) {
-    const root = S.view === 'kanban' ? '#kanban ' : '#timeline ';
     requestAnimationFrame(() => {
-      let i = 0;
+      const moves = [];
       for (const el of $$(root + '.post-card')) {
         const old = rects.get(el.dataset.key);
         if (!old || (!old.width && !old.height)) continue; // hidden-view zero rects
         const now = el.getBoundingClientRect();
         const dx = old.left - now.left, dy = old.top - now.top;
-        if (!dx && !dy) continue;
+        if (dx || dy) moves.push([el, dx, dy]);
+      }
+      moves.forEach(([el, dx, dy], i) => {
         el.style.transform = `translate(${dx}px,${dy}px)`;
         el.style.transition = 'none';
         setTimeout(() => {
           el.style.transition = 'transform .35s cubic-bezier(.2,.8,.2,1)';
           el.style.transform = '';
-        }, 80 * (i++ % 5) + 20);
-      }
+        }, 80 * (i % 5) + 20);
+      });
     });
   }
 }
@@ -461,14 +565,17 @@ function renderGateBar() {
     el.innerHTML = `<span class="gn-circle">${i < g.current ? '<svg><use href="#i-check"/></svg>' : (n.blocked ? '<svg><use href="#i-warn"/></svg>' : i + 1)}</span><span class="gn-label">${n.label}</span>` + (i < g.nodes.length - 1 ? `<span class="gn-link ${i < g.current ? 'done' : ''}"></span>` : '');
     el.title = n.approved ? '승인됨' : (n.done ? '증거 확인됨' : '대기');
     el.onclick = () => showGateInfo(el, n, i);
+    pressable(el);
     box.appendChild(el);
   });
   renderCTA();
   drawWire();
 }
-function showGateInfo(el, n) {
+function showGateInfo(el, n, i) {
   const appr = (S.gates.approvals || []).find((a) => a.node === n.key);
-  popover(el, `<b>${n.label}</b><p class="muted" style="margin-top:4px">${n.done ? '파일 증거 확인됨' : '아직 산출물 없음'}${appr ? `<br>승인: ${new Date(appr.approvedAt).toLocaleString('ko-KR')}` : ''}</p>` + (n.stage && !S.running ? `<button id="pop-run" style="margin-top:8px">이 단계 실행</button>` : ''));
+  // 실행 버튼은 도달 가능한 노드까지만 — 앞 게이트의 도장을 우회해 뒷 단계를 돌리지 못하게
+  const reachable = typeof i === 'number' ? i <= S.gates.current : true;
+  popover(el, `<b>${n.label}</b><p class="muted" style="margin-top:4px">${n.done ? '파일 증거 확인됨' : '아직 산출물 없음'}${appr ? `<br>승인: ${new Date(appr.approvedAt).toLocaleString('ko-KR')}` : ''}</p>` + (n.stage && !S.running && reachable ? `<button id="pop-run" style="margin-top:8px">이 단계 실행</button>` : (n.stage && !reachable ? '<p class="muted small" style="margin-top:6px">앞 게이트 승인 후 실행할 수 있습니다</p>' : '')));
   const b = $('#pop-run'); if (b) b.onclick = () => { hidePopover(); runStage(n.stage); };
 }
 function renderCTA() {
@@ -481,7 +588,11 @@ function renderCTA() {
   if (S.running) {
     cta.classList.add('stop'); icon.setAttribute('href', '#i-stop');
     label.textContent = `중지 · ${fmtDur(Date.now() - S.runStart)}`;
-    cta.onclick = async () => { await window.api.pipe.stop(); setRunning(null); };
+    cta.onclick = async () => {
+      if (S.auto) { await window.api.auto.stop(); } // 오토파일럿 중이면 파일럿째 중지 (다음 단계로 안 넘어가게)
+      else await window.api.pipe.stop();
+      setRunning(null);
+    };
     return;
   }
   icon.setAttribute('href', '#i-play');
@@ -512,6 +623,7 @@ function confirmRun(anchor, stage, name) {
 }
 async function runStage(stage, extra) {
   if (S.running) { toast('다른 단계가 실행 중입니다'); return; }
+  if (S.auto) { toast('오토파일럿 실행 중입니다 — 중지 후 개별 실행하세요'); return; }
   if (S.chatBusy) { toast('디렉터 응답을 기다리는 중입니다 — 잠시 후 실행하세요'); return; }
   setRunning(stage);
   switchDock('log');
@@ -534,14 +646,61 @@ $('#gate-checklist').onclick = async (e) => {
   const items = (st.statusItems || []).map((i) => `<div style="padding:2px 0">${i.done ? '✅' : '⬜'} ${esc(i.label)}</div>`).join('') || '<span class="muted">기록 없음</span>';
   popover(e.currentTarget, `<b>워크플로 체크리스트</b><div style="margin-top:8px;max-height:300px;overflow-y:auto;font-size:12px">${items}</div>`);
 };
+// ---- 오토파일럿: 승인 게이트 앞까지 자동 진행 --------------------------------------
+$('#gate-auto').onclick = (e) => {
+  if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+  if (S.auto) { window.api.auto.stop(); return; } // 실행 중이면 중지
+  if (S.running) { toast('단계 실행 중에는 오토파일럿을 시작할 수 없습니다'); return; }
+  const b = S.board;
+  if (!b || !b.foundation || !b.foundation.brand) { toast('브랜드 스타일이 먼저 필요합니다 — 온보딩을 진행하세요'); return; }
+  popover(e.currentTarget, `<b>오토파일럿</b>
+    <p class="muted small" style="margin:6px 0;line-height:1.6">캘린더 → 카피 → 릴스 → 비주얼 브리프 → 컴플라이언스까지, 증거가 없는 단계를 자동으로 이어서 실행합니다.
+    <b>승인 도장이 필요한 지점(캘린더·카피·비주얼)에서는 멈추고</b> 알림을 보냅니다. 이미지 생성은 비주얼 브리프 승인 후에만 진행합니다.</p>
+    <button id="pop-auto-go" style="margin-top:6px;width:100%">▶ 오토파일럿 시작</button>`);
+  $('#pop-auto-go').onclick = () => { hidePopover(); startAutopilot(); };
+};
+async function startAutopilot() {
+  const dir = S.client.dir;
+  S.auto = true;
+  switchDock('log');
+  logLine('autopilot', '▶ 오토파일럿 시작 — 승인 게이트 앞까지 자동 진행');
+  updateAutoBtn();
+  try {
+    const r = await window.api.auto.run(dir);
+    if (r && r.error) toast('오토파일럿: ' + r.error);
+  } catch (e) {
+    logLine('autopilot', '✖ 오류: ' + e.message);
+  } finally {
+    S.auto = false; updateAutoBtn();
+    if (S.client && S.client.dir === dir) await refreshBoard(false);
+  }
+}
+function updateAutoBtn() {
+  const btn = $('#gate-auto');
+  btn.classList.toggle('active', S.auto);
+  btn.innerHTML = S.auto
+    ? '<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-stop"/></svg> 오토파일럿 중지'
+    : '<svg style="width:13px;height:13px;vertical-align:-2px"><use href="#i-auto"/></svg> 오토파일럿';
+}
+window.api.onAuto((ev) => {
+  if (!ev || !S.client || (ev.dir && ev.dir !== S.client.dir)) return;
+  if (ev.state === 'stage') logLine('autopilot', `▸ ${STAGE_LABEL[STAGE2COL[ev.stage]] || ev.stage} 단계 실행`);
+  else if (ev.state === 'skip') logLine('autopilot', `⤳ ${STAGE_LABEL[STAGE2COL[ev.stage]] || ev.stage} — 이미 완료됨, 건너뜀`);
+  else if (ev.state === 'paused') { logLine('autopilot', `⏸ 일시정지 — ${ev.message}`); toast(ev.message); }
+  else if (ev.state === 'done') { logLine('autopilot', `✔ ${ev.message}`); toast(ev.message); }
+  else if (ev.state === 'failed') { logLine('autopilot', `✖ ${ev.message}`); toast('오토파일럿 중단: ' + ev.message); }
+  else if (ev.state === 'stopped') logLine('autopilot', '■ 사용자 중지');
+});
 
 // ---- approval sheet + 도장 ------------------------------------------------------------------
 function reopenApproveSheet(node) {
+  if (S.stampHolding) return; // 도장을 누르는 중 — 재구성으로 홀드를 끊지 않는다
   const checked = new Set($$('.warn-sign').filter((c) => c.checked).map((c) => c.dataset.n));
-  openApproveSheet(node);
+  const selRel = ($('#appr-list .file-row.sel') || {}).dataset ? $('#appr-list .file-row.sel').dataset.rel : null;
+  openApproveSheet(node, selRel);
   for (const c of $$('.warn-sign')) if (checked.has(c.dataset.n)) c.checked = true;
 }
-function openApproveSheet(node) {
+function openApproveSheet(node, restoreRel) {
   // innerHTML 교체 전에 진행 중인 도장 타이머를 반드시 끊는다 — 고아 인터벌이
   // detach된 버튼으로 승인을 강행하는 사고 방지
   if (typeof currentStampReset === 'function') currentStampReset();
@@ -589,16 +748,23 @@ function openApproveSheet(node) {
   const showFiles = isCompliance && complianceFile ? [{ ...complianceFile, lane: 'compliance' }] : files;
   for (const f of showFiles.slice(0, 30)) {
     const row = $('#tpl-file-row').content.firstElementChild.cloneNode(true);
+    row.dataset.rel = f.rel;
     $('.fr-name', row).textContent = f.name;
     $('.fr-time', row).textContent = relTime(f.mtime);
     row.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-file', f.rel));
     row.onclick = async () => {
+      $$('.file-row.sel', list).forEach((x) => x.classList.remove('sel'));
+      row.classList.add('sel');
       const r = await window.api.ws.readFile(S.client.dir, f.rel);
-      preview.innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}">` : `<pre>${esc(r.text)}</pre>`) : `<p class="muted">${esc(r.error)}</p>`;
+      preview.innerHTML = previewHTML(r, f.rel);
     };
+    pressable(row);
     list.appendChild(row);
   }
-  if (showFiles[0]) list.firstElementChild && list.firstElementChild.click();
+  // 보드 갱신으로 재구성됐어도 보던 파일을 유지 — 없으면 첫 파일
+  const keep = restoreRel && $(`.file-row[data-rel="${CSS.escape(restoreRel)}"]`, list);
+  if (keep) keep.click();
+  else if (showFiles[0] && list.firstElementChild) list.firstElementChild.click();
   $('#appr-close').onclick = closeOverlay;
   $('#appr-reject').onclick = () => { closeOverlay(); prefillChat(`${node.label} 산출물에 수정이 필요해: `); };
   for (const b of $$('[data-rework]', sheet)) b.onclick = () => {
@@ -617,12 +783,13 @@ function bindStamp(btn, node, isCompliance) {
     return null;
   };
   let timer = null, p = 0;
-  const reset = () => { clearInterval(timer); timer = null; p = 0; btn.style.setProperty('--p', 0); };
+  const reset = () => { clearInterval(timer); timer = null; p = 0; S.stampHolding = false; btn.style.setProperty('--p', 0); };
   currentStampReset = reset;
-  btn.addEventListener('pointerdown', () => {
+  const begin = () => {
     if (timer) return; // 멀티터치/펜 중복 진입 차단
     const why = canStamp();
     if (why) { toast(why); return; }
+    S.stampHolding = true; // 도장 누르는 중엔 보드 갱신이 시트를 재구성하지 못하게
     timer = setInterval(async () => {
       if (!btn.isConnected) { reset(); return; } // 시트 재구성으로 detach된 버튼 — 승인 진행 금지
       p += 100 / (600 / 30);
@@ -645,10 +812,17 @@ function bindStamp(btn, node, isCompliance) {
         }, 500);
       }
     }, 30);
-  });
+  };
+  btn.addEventListener('pointerdown', begin);
   btn.addEventListener('pointerup', reset);
   btn.addEventListener('pointerleave', reset);
   btn.addEventListener('pointercancel', reset);
+  // 키보드 도장 — Space/Enter를 누르고 있으면 동일한 길게-눌러-승인 (A11y)
+  btn.addEventListener('keydown', (e) => {
+    if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); begin(); }
+  });
+  btn.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') reset(); });
+  btn.addEventListener('blur', reset);
 }
 let currentStampReset = null;
 
@@ -659,15 +833,46 @@ function switchDock(name) {
   $$('#dock-seg button').forEach((b) => b.classList.toggle('active', b.dataset.dock === name));
   $('#dock-chat').classList.toggle('hidden', name !== 'chat');
   $('#dock-log').classList.toggle('hidden', name !== 'log');
+  $('#dock-history').classList.toggle('hidden', name !== 'history');
   $('#dock-inspector').classList.add('hidden');
+  if (name === 'history') renderHistory();
 }
 for (const b of $$('#dock-seg button')) b.onclick = () => switchDock(b.dataset.dock);
 
+async function renderHistory() {
+  const box = $('#dock-history');
+  if (!S.client) { box.innerHTML = '<p class="muted" style="padding:14px">클라이언트를 선택하세요</p>'; return; }
+  box.innerHTML = '<p class="muted" style="padding:14px">불러오는 중…</p>';
+  const h = await window.api.hist.list(S.client.dir);
+  const runs = (h && h.runs) || [];
+  const KIND = { stage: '단계', chat: '대화', autopilot: '오토파일럿' };
+  const rows = runs.map((r) => {
+    const when = new Date(r.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const dur = r.ms ? fmtDur(r.ms) : '';
+    const cost = fmtCost(r.costUsd);
+    const label = r.stage ? (STAGE_LABEL[STAGE2COL[r.stage]] || r.stage) : (KIND[r.kind] || r.kind);
+    const note = r.note ? ` · ${esc(r.note.slice(0, 40))}` : '';
+    return `<div class="hist-row ${r.ok ? '' : 'bad'}">
+      <span class="hist-dot ${r.ok ? 'ok' : 'bad'}"></span>
+      <b>${esc(label)}</b>
+      <span class="muted small" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(KIND[r.kind] || r.kind)}${note}</span>
+      <span class="muted small">${dur}${cost ? ' · ' + cost : ''}</span>
+      <span class="muted small">${when}</span></div>`;
+  }).join('') || '<p class="muted" style="padding:14px">아직 실행 기록이 없습니다</p>';
+  const month = h && h.monthCost ? fmtCost(h.monthCost) : '';
+  box.innerHTML = `<div class="hist-head"><b>실행 기록</b>${month ? `<span class="chip tiny" title="이번 달 누적 API 비용">이번 달 ${month}</span>` : ''}</div>
+    <div class="hist-list">${rows}</div>`;
+}
+
 function addMsg(kind, text) {
   const d = document.createElement('div');
-  d.className = `msg ${kind}`; d.textContent = text;
-  $('#chat-log').appendChild(d);
-  $('#chat-log').scrollTop = $('#chat-log').scrollHeight;
+  d.className = `msg ${kind}`;
+  if (kind === 'dir') d.innerHTML = md(text); // 디렉터 응답은 마크다운 — 표/헤딩이 원문 기호로 보이지 않게
+  else d.textContent = text;
+  const log = $('#chat-log');
+  log.appendChild(d);
+  while (log.children.length > 120) log.firstChild.remove(); // 장시간 세션 DOM 캡
+  log.scrollTop = log.scrollHeight;
   return d;
 }
 function renderChips() {
@@ -684,6 +889,23 @@ function prefillChat(text) {
   $('#chat-input').value = text;
   $('#chat-input').focus();
 }
+// 스트리밍 수신 상태 — chat:stream 이벤트가 진행 중 턴의 라이브 버블/활동 라인을 채운다
+const chatStream = { dir: null, live: null, act: null, buf: '' };
+window.api.onChatStream(({ dir, ev }) => {
+  if (!ev || chatStream.dir !== dir || !S.client || S.client.dir !== dir) return;
+  const log = $('#chat-log');
+  if (ev.kind === 'text' && ev.text) {
+    if (!chatStream.live) { chatStream.live = document.createElement('div'); chatStream.live.className = 'msg dir'; log.insertBefore(chatStream.live, chatStream.act); }
+    chatStream.buf += (chatStream.buf ? '\n\n' : '') + ev.text;
+    chatStream.live.innerHTML = md(chatStream.buf);
+    log.scrollTop = log.scrollHeight;
+  } else if (ev.kind === 'tool' && chatStream.act) {
+    chatStream.act.dataset.tool = `▸ ${ev.name}${ev.target ? ' — ' + ev.target : ''}`;
+  } else if (ev.kind === 'raw' && chatStream.act) {
+    const t = ev.text.trim();
+    if (t && !/^\W*$/.test(t)) chatStream.act.dataset.tool = t.slice(0, 80); // codex 진행 라인
+  }
+});
 async function sendChat() {
   if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
   if (S.running) { toast('단계 실행 중에는 디렉터 대화를 보낼 수 없습니다 (같은 폴더를 동시에 편집하게 됩니다)'); return; }
@@ -694,22 +916,39 @@ async function sendChat() {
   if (S.chips.length) msg = S.chips.map((c) => c.context).join('\n') + '\n\n' + msg;
   const dir = S.client.dir; // 전송 시점의 클라이언트 — 응답이 다른 클라이언트에 새지 않게
   S.chatBusy = true; $('#btn-chat-send').disabled = true;
+  $('#chat-stop').classList.remove('hidden');
   input.value = ''; S.chips = []; renderChips();
   addMsg('user', msg);
   const think = addMsg('think', '디렉터 작업 중…');
+  chatStream.dir = dir; chatStream.live = null; chatStream.act = think; chatStream.buf = '';
   const t0 = Date.now();
-  const tick = setInterval(() => { think.textContent = `디렉터 작업 중… ${fmtDur(Date.now() - t0)}`; }, 1000);
+  const tick = setInterval(() => {
+    const tool = think.dataset.tool ? ` · ${think.dataset.tool}` : '';
+    think.textContent = `디렉터 작업 중… ${fmtDur(Date.now() - t0)}${tool}`;
+  }, 1000);
   try {
     const r = await window.api.chat.send(dir, msg);
-    if (S.client && S.client.dir === dir) addMsg(r.ok ? 'dir' : 'err', r.text);
+    if (S.client && S.client.dir === dir) {
+      // 최종 응답으로 라이브 버블을 교체 — 스트림 조각과 최종본의 중복 방지
+      if (chatStream.live) chatStream.live.remove();
+      const done = addMsg(r.ok ? 'dir' : 'err', r.text);
+      const meta = [fmtCost(r.costUsd), r.durationMs ? Math.round(r.durationMs / 1000) + 's' : ''].filter(Boolean).join(' · ');
+      if (r.ok && meta) { const m = document.createElement('div'); m.className = 'msg-meta muted small'; m.textContent = meta; done.appendChild(m); }
+    }
   } catch (e) {
     addMsg('err', '전송 실패: ' + e.message);
   } finally {
     clearInterval(tick); think.remove();
+    chatStream.dir = null; chatStream.live = null; chatStream.act = null; chatStream.buf = '';
     S.chatBusy = false; $('#btn-chat-send').disabled = false;
+    $('#chat-stop').classList.add('hidden');
   }
   if (S.client && S.client.dir === dir) { input.focus(); await refreshBoard(false); }
 }
+$('#chat-stop').onclick = async () => {
+  const r = await window.api.chat.stop();
+  if (r && r.wasRunning) toast('디렉터 턴을 중지했습니다');
+};
 $('#btn-chat-send').onclick = sendChat;
 $('#chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendChat(); } });
 $('#chat-reset').onclick = async () => {
@@ -740,15 +979,19 @@ $('#btn-log-copy').onclick = async () => {
 
 function logLine(source, line) {
   const pane = $('#log-pane');
-  if (++S.logLines > 5000) { pane.textContent = ''; S.logLines = 0; }
+  // 위쪽부터 잘라낸다 — 장시간 실행 중 로그 전체가 증발하지 않게 (라인당 노드 2개)
+  while (pane.childNodes.length > 8000) { pane.removeChild(pane.firstChild); pane.removeChild(pane.firstChild); }
   const atBottom = pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 40;
   const span = document.createElement('span');
   span.innerHTML = `<span class="src">[${esc(source)}]</span> `;
   pane.appendChild(span);
   pane.appendChild(document.createTextNode(line + '\n'));
   if (atBottom) pane.scrollTop = pane.scrollHeight;
-  const t = $(`[data-ticker]`);
-  if (t) t.textContent = line;
+  // 칸반 티커는 실행 중인 스테이지의 라인만 — 무관한 오류/채팅 로그가 진행상황으로 위장하지 않게
+  if (S.running && source === S.running) {
+    const t = $(`[data-ticker]`);
+    if (t) t.textContent = line;
+  }
 }
 
 function openInspector(p) {
@@ -760,8 +1003,19 @@ function openInspector(p) {
   box.classList.remove('hidden');
   const color = `var(--ch-${p.channel})`;
   const stageIdx = S.board.stages.indexOf(p.stage);
-  const evidence = (lane) => (S.board.lanes[lane] || []).slice(0, 2);
-  const stepFiles = { planned: [], copy: evidence(p.lane), visual: p.isReel ? evidence('videos') : evidence('creatives'), review: evidence('compliance'), ready: [] };
+  // 이 포스트에 실제 매칭된 파일(board가 토픽으로 찾음) — 없을 때만 레인 최신 파일로 폴백
+  const mine = (kinds) => (p.files || []).filter((f) => kinds.includes(f.kind))
+    .map((f) => ({ rel: f.rel, name: f.rel.split(/[\\/]/).pop() }));
+  const laneFallback = (lane) => (S.board.lanes[lane] || []).slice(0, 2);
+  const copyFiles = mine(['copy']);
+  const visFiles = mine(['video', 'board', 'creative']);
+  const stepFiles = {
+    planned: [],
+    copy: copyFiles.length ? copyFiles : laneFallback(p.lane),
+    visual: visFiles.length ? visFiles : (p.isReel ? laneFallback('videos') : laneFallback('creatives')),
+    review: mine(['verdict']).length ? mine(['verdict']) : laneFallback('compliance'),
+    ready: [],
+  };
   box.innerHTML = `
     <div class="insp-head"><button class="icon-btn" id="insp-back"><svg><use href="#i-back"/></svg></button>
       <span class="mono-tile" style="background:color-mix(in srgb, ${color} 16%, transparent);color:${color}">${CH_MONO[p.channel]}</span>
@@ -793,7 +1047,8 @@ function openInspector(p) {
   for (const a of $$('.insp-file', box)) a.onclick = async (e) => {
     e.preventDefault();
     const r = await window.api.ws.readFile(S.client.dir, a.dataset.rel);
-    $('#insp-preview').innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}" style="max-width:100%;border-radius:8px">` : `<pre style="white-space:pre-wrap;font-size:11px;max-height:220px;overflow-y:auto;background:var(--card);border-radius:8px;padding:10px">${esc(r.text.slice(0, 6000))}</pre>`) : '';
+    if (r && r.ok && r.kind === 'text') r.text = r.text.slice(0, 6000);
+    $('#insp-preview').innerHTML = `<div class="insp-prev-box">${previewHTML(r, a.dataset.rel)}</div>`;
   };
 }
 
@@ -879,7 +1134,7 @@ function openDrawer() {
     row.appendChild(attach);
     row.onclick = async () => {
       const r = await window.api.ws.readFile(S.client.dir, row.dataset.rel);
-      $('#drawer-preview').innerHTML = r.ok ? (r.kind === 'image' ? `<img src="${r.dataUrl}">` : `<pre>${esc(r.text)}</pre>`) : `<p class="muted">${esc(r.error)}</p>`;
+      $('#drawer-preview').innerHTML = previewHTML(r, row.dataset.rel);
     };
     row.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/sat-file', row.dataset.rel));
   }

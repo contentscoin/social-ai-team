@@ -1,5 +1,5 @@
 // Social AI Team Desktop — Electron main process
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Notification } = require('electron');
 const path = require('path');
 const setup = require('./lib/setup');
 const workspace = require('./lib/workspace');
@@ -12,6 +12,28 @@ const board = require('./lib/board');
 const gates = require('./lib/gates');
 const publishlog = require('./lib/publishlog');
 const applog = require('./lib/applog');
+const locks = require('./lib/lock');
+const history = require('./lib/history');
+const chatlog = require('./lib/chatlog');
+const autopilot = require('./lib/autopilot');
+const proc = require('./lib/proc');
+
+// 중복 실행 방지 — 두 인스턴스가 settings/gates/clients.json을 서로 밟는다
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.focus(); }
+  });
+}
+// Windows 토스트 알림에 필요 (electron-builder appId와 동일해야 함)
+app.setAppUserModelId('kr.contentscoin.socialaiteam');
+// 앱 종료 시 실행 중인 CLI 자식들을 고아로 남기지 않는다
+app.on('before-quit', () => {
+  try { pipeline.stopCurrent(); } catch { /* gone */ }
+  try { chat.stopCurrent(); } catch { /* gone */ }
+  try { proc.killAll(); } catch { /* gone */ }
+});
 
 // ---- 프로세스 레벨 오류는 파일 + 렌더러 로그로 남긴다 (조용한 죽음 금지) ----------
 process.on('uncaughtException', (e) => {
@@ -56,6 +78,18 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+  // 워크스페이스 파일에서 온 링크가 앱 창을 원격 페이지로 끌고 가지 못하게 —
+  // window.api(IPC 전체)가 붙은 창에서의 원격 내비게이션은 곧 원격 코드에 CLI 실행 권한
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url !== win.webContents.getURL()) {
+      e.preventDefault();
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+    }
+  });
   win.on('closed', () => { win = null; });
   // 렌더러가 죽거나 멈추면 백지 창으로 방치하지 않는다
   win.webContents.on('render-process-gone', (_e, details) => {
@@ -81,6 +115,14 @@ const send = (channel, payload) => {
   if (channel === 'log' && payload) applog.write(payload.source || 'log', payload.line || '');
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 };
+
+// OS 알림 — 창이 포커스를 잃은 동안 끝난 장시간 작업을 놓치지 않게
+function notify(title, body) {
+  try {
+    if (win && !win.isDestroyed() && win.isFocused()) return; // 보고 있으면 토스트로 충분
+    if (Notification.isSupported()) new Notification({ title, body: String(body || '').slice(0, 140) }).show();
+  } catch { /* 알림 실패는 치명적이지 않다 */ }
+}
 
 // ---- 렌더러 오류 수집 + 로그 파일 접근 --------------------------------------------
 ipcMain.handle('app:log', (_e, source, line) => { applog.write(source, line); return { ok: true }; });
@@ -117,17 +159,17 @@ ipcMain.handle('update:check', async () => {
 ipcMain.handle('update:install', () => { if (autoUpdater) autoUpdater.quitAndInstall(); });
 
 // ---- Setup wizard ----------------------------------------------------------
-ipcMain.handle('setup:check', () => setup.checkEnvironment());
-ipcMain.handle('setup:installSkills', () => setup.installSkills());
-ipcMain.handle('setup:installCodex', () => setup.installCodexCli((line) => send('log', { source: 'setup', line })));
-ipcMain.handle('setup:codexLogin', () => setup.codexOAuthLogin((line) => send('log', { source: 'setup', line })));
-ipcMain.handle('setup:registerMcp', async () => {
+ipcMain.handle('setup:check', safe(() => setup.checkEnvironment()));
+ipcMain.handle('setup:installSkills', safe(() => setup.installSkills()));
+ipcMain.handle('setup:installCodex', safe(() => setup.installCodexCli((line) => send('log', { source: 'setup', line }))));
+ipcMain.handle('setup:codexLogin', safe(() => setup.codexOAuthLogin((line) => send('log', { source: 'setup', line }))));
+ipcMain.handle('setup:registerMcp', safe(async () => {
   const r = await setup.registerCodexMcp((line) => send('log', { source: 'setup', line }));
   channelCache = { at: 0, data: null }; // ~/.claude.json changed — re-detect channel connections
   return r;
-});
-ipcMain.handle('setup:installIma2', () => setup.installIma2((line) => send('log', { source: 'setup', line })));
-ipcMain.handle('setup:ima2Setup', () => pipeline.openInteractiveTerminal(app.getPath('home'), 'ima2 setup'));
+}));
+ipcMain.handle('setup:installIma2', safe(() => setup.installIma2((line) => send('log', { source: 'setup', line }))));
+ipcMain.handle('setup:ima2Setup', safe(() => pipeline.openInteractiveTerminal(app.getPath('home'), 'ima2 setup')));
 
 // ---- Workspace (clients) ---------------------------------------------------
 ipcMain.handle('ws:list', safe(() => workspace.listClients()));
@@ -190,12 +232,26 @@ ipcMain.handle('ws:watch', (_e, dir) => {
   watchDir = dir;
   if (!dir) return { ok: true, watching: false };
   const targets = [path.join(dir, 'outputs'), path.join(dir, 'context')];
+  // 재귀 워처가 에러로 죽으면(EPERM, 폴더 재생성 등) 3초 후 재장전 — 보드가 조용히 멎지 않게
+  const armRecursive = (t) => {
+    try { fs.mkdirSync(t, { recursive: true }); } catch { /* exists */ }
+    const w = fs.watch(t, { recursive: true }, onFsEvent);
+    w.on('error', (e) => {
+      applog.write('watch-error', t + ': ' + (e && e.message || e));
+      try { w.close(); } catch { /* gone */ }
+      const i = watchers.indexOf(w);
+      if (i >= 0) watchers.splice(i, 1);
+      setTimeout(() => {
+        if (watchDir !== dir) return; // 이미 다른 워크스페이스로 이동
+        try { watchers.push(armRecursive(t)); pushBoard(); } catch { /* 다음 에러 때 재시도 */ }
+      }, 3000);
+    });
+    return w;
+  };
   for (const t of targets) {
     try { fs.mkdirSync(t, { recursive: true }); } catch { /* exists */ }
     try {
-      const w = fs.watch(t, { recursive: true }, onFsEvent);
-      w.on('error', () => { try { w.close(); } catch { /* gone */ } });
-      watchers.push(w);
+      watchers.push(armRecursive(t));
     } catch {
       // Linux: no recursive watch — watch parent + subdirs, rescan for lanes created later
       addWatch(t, () => { rescanSubdirs(t); onFsEvent(); });
@@ -268,11 +324,20 @@ ipcMain.handle('channels:check', () => {
 });
 
 // ---- Pipeline stages -------------------------------------------------------
-ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
+// 공용 실행기 — 수동 실행(pipe:runStage)과 오토파일럿이 같은 계측(이벤트/기록/알림)을 쓴다.
+// 잠금은 호출자 책임: 수동은 'stage', 오토파일럿은 런 전체에 'autopilot'을 잡고 들어온다.
+async function execStage(dir, stage, opts) {
   const startedAt = Date.now();
   send('stage', { state: 'start', stage, startedAt, dir });
   try {
     const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line, dir }));
+    const label = (pipeline.STAGES[stage] || {}).label || stage;
+    history.append({
+      dir, kind: 'stage', stage, engine: 'claude', model: config.getModels().claude,
+      ok: !!r.ok, ms: Date.now() - startedAt, costUsd: typeof r.costUsd === 'number' ? r.costUsd : undefined, startedAt,
+    });
+    // 30초 넘게 걸린 작업만 OS 알림 — 즉시 끝난 것까지 울리면 소음
+    if (Date.now() - startedAt > 30_000) notify(`${label} ${r.ok ? '완료' : '실패'}`, r.ok ? '보드에서 결과를 확인하세요.' : String(r.tail || '').slice(0, 140));
     return { ...r, startedAt };
   } catch (e) {
     return { ok: false, code: -1, out: String(e && e.message || e), tail: String(e && e.message || e), startedAt };
@@ -280,14 +345,79 @@ ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
     send('stage', { state: 'end', stage, startedAt, dir });
     setTimeout(pushBoard, 300); // stages write files — refresh the board promptly
   }
+}
+ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) {
+    const msg = locks.busyMessage(dir);
+    return { ok: false, code: -1, out: msg, tail: msg, startedAt: Date.now() };
+  }
+  try { return await execStage(dir, stage, opts); }
+  finally { locks.release(dir, 'stage'); }
 });
 ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
-ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTerminal(dir, config.getEngine()));
+ipcMain.handle('pipe:openTerminal', safe((_e, dir) =>
+  pipeline.openInteractiveTerminal(dir, config.getEngine(), (msg) => send('log', { source: 'terminal-error', line: msg, dir }))));
+
+// ---- Autopilot — 승인 게이트 앞까지 자동 진행 -----------------------------------
+ipcMain.handle('auto:run', async (_e, dir) => {
+  const lock = locks.acquire(dir, 'autopilot');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  const startedAt = Date.now();
+  try {
+    const r = await autopilot.run(dir, {
+      buildBoard: (d) => board.buildBoard(d),
+      runStage: (d, s) => execStage(d, s, {}),
+      onEvent: (ev) => {
+        send('auto', ev);
+        if (ev.state === 'paused') notify('오토파일럿 대기', ev.message || '승인 도장이 필요합니다.');
+        else if (ev.state === 'done') notify('오토파일럿 완료', ev.message || '');
+        else if (ev.state === 'failed') notify('오토파일럿 실패', ev.message || '');
+      },
+    });
+    history.append({
+      dir, kind: 'autopilot', engine: 'claude', model: config.getModels().claude,
+      ok: r.state !== 'failed', ms: Date.now() - startedAt, startedAt,
+      note: `${r.state}${r.ran && r.ran.length ? ' — ' + r.ran.join(',') : ''}`,
+    });
+    return r;
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  } finally { locks.release(dir, 'autopilot'); }
+});
+ipcMain.handle('auto:stop', () => autopilot.stop(() => pipeline.stopCurrent()));
+ipcMain.handle('auto:status', () => autopilot.status());
+
+// ---- 실행 기록 ----------------------------------------------------------------
+ipcMain.handle('hist:list', safe((_e, dir) => history.forDir(dir)));
 
 // ---- Engine + in-app director chat -----------------------------------------
-ipcMain.handle('cfg:getEngine', () => config.getEngine());
-ipcMain.handle('cfg:setEngine', (_e, engine) => config.setEngine(engine).engine);
-ipcMain.handle('cfg:getModels', () => config.getModels());
-ipcMain.handle('cfg:setModel', (_e, engine, model) => config.setModel(engine, model));
-ipcMain.handle('chat:send', (_e, dir, msg) => chat.send(dir, msg, (line) => send('log', { source: 'chat', line })));
-ipcMain.handle('chat:reset', (_e, dir) => chat.reset(dir));
+ipcMain.handle('cfg:getEngine', safe(() => config.getEngine()));
+ipcMain.handle('cfg:setEngine', safe((_e, engine) => config.setEngine(engine).engine));
+ipcMain.handle('cfg:getModels', safe(() => config.getModels()));
+ipcMain.handle('cfg:setModel', safe((_e, engine, model) => config.setModel(engine, model)));
+ipcMain.handle('chat:send', async (_e, dir, msg) => {
+  const lock = locks.acquire(dir, 'chat');
+  if (!lock.ok) return { ok: false, text: locks.busyMessage(dir), engine: config.getEngine() };
+  const startedAt = Date.now();
+  try {
+    chatlog.append(dir, { role: 'user', text: msg });
+    const r = await chat.send(
+      dir, msg,
+      (line) => send('log', { source: 'chat', line, dir }),
+      (ev) => send('chat:stream', { dir, ev }),
+    );
+    chatlog.append(dir, { role: 'dir', text: r.text, engine: r.engine, ok: r.ok });
+    history.append({
+      dir, kind: 'chat', engine: r.engine, model: config.getModels()[r.engine] || '',
+      ok: !!r.ok, ms: Date.now() - startedAt, costUsd: typeof r.costUsd === 'number' ? r.costUsd : undefined,
+      startedAt, note: String(msg).slice(0, 80),
+    });
+    return r;
+  } catch (e) {
+    return { ok: false, text: String(e && e.message || e), engine: config.getEngine() };
+  } finally { locks.release(dir, 'chat'); }
+});
+ipcMain.handle('chat:stop', () => chat.stopCurrent());
+ipcMain.handle('chat:history', safe((_e, dir) => chatlog.list(dir)));
+ipcMain.handle('chat:reset', safe((_e, dir) => { chatlog.clear(dir); return chat.reset(dir); }));

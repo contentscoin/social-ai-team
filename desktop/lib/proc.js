@@ -56,6 +56,17 @@ function quoteArg(s) {
   return /[^\w@%+=:,./-]/.test(s) || s === '' ? "'" + s.replace(/'/g, "'\\''") + "'" : s;
 }
 
+// 살아있는 자식 프로세스 레지스트리 — 앱 종료 시 고아로 남기지 않는다 (main의 before-quit이 killAll 호출)
+const liveChildren = new Set();
+function killTree(child) {
+  try {
+    // Windows: 셸만 죽이면 손자(claude/codex/npm)가 살아남아 파이프를 물고 있다 — 트리째 종료
+    if (isWin && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+    else child.kill();
+  } catch { /* already gone */ }
+}
+function killAll() { for (const c of [...liveChildren]) killTree(c); }
+
 // Run `name args...` through the platform shell with real quoting and an augmented PATH.
 // Resolves {ok, code, out, tail, cmd, timedOut?}. Never rejects.
 // opts.stdinText — 프롬프트 등 자유 텍스트는 반드시 이걸로 전달할 것: Windows cmd.exe는
@@ -66,6 +77,8 @@ function runCmd(name, args, onLine, opts = {}) {
   const line = [quoteArg(cmd), ...args.map(quoteArg)].join(' ');
   return new Promise((resolve) => {
     let child;
+    let settled = false;
+    const settle = (r) => { if (settled) return; settled = true; if (child) liveChildren.delete(child); resolve(r); };
     const hasStdin = opts.stdinText != null;
     try {
       child = spawn(line, [], {
@@ -76,35 +89,61 @@ function runCmd(name, args, onLine, opts = {}) {
         stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       });
     } catch (e) {
-      resolve({ ok: false, code: -1, out: e.message, tail: e.message, cmd });
+      settle({ ok: false, code: -1, out: e.message, tail: e.message, cmd });
       return;
     }
+    liveChildren.add(child);
     if (hasStdin) {
       try { child.stdin.write(String(opts.stdinText)); child.stdin.end(); } catch { /* closed early */ }
     }
     let out = '';
     let timedOut = false;
-    const feed = (buf) => {
-      const text = buf.toString();
+    // stream-json 등 라인 프로토콜을 위해 청크 경계에서 라인이 쪼개지지 않게 스트림별로 버퍼링
+    const OUT_CAP = 1536 * 1024;
+    const append = (text) => {
       out += text;
-      if (onLine) text.split(/\r?\n/).filter(Boolean).forEach((l) => onLine(l));
+      if (out.length > OUT_CAP) out = '…(앞부분 생략)…\n' + out.slice(-(OUT_CAP - 64 * 1024));
     };
-    child.stdout.on('data', feed);
-    child.stderr.on('data', feed);
+    let restOut = '', restErr = '';
+    const feed = (which) => (buf) => {
+      const text = buf.toString();
+      append(text);
+      if (!onLine) return;
+      const parts = ((which === 'e' ? restErr : restOut) + text).split(/\r?\n/);
+      const rest = parts.pop();
+      if (which === 'e') restErr = rest; else restOut = rest;
+      parts.filter(Boolean).forEach((l) => onLine(l));
+    };
+    child.stdout.on('data', feed('o'));
+    child.stderr.on('data', feed('e'));
+    const flushRest = () => {
+      if (!onLine) return;
+      for (const rest of [restOut, restErr]) if (rest && rest.trim()) onLine(rest);
+      restOut = restErr = '';
+    };
     if (opts.timeoutMs) setTimeout(() => {
+      if (settled) return;
       timedOut = true;
       if (onLine) onLine(`[timeout ${opts.timeoutMs}ms — 프로세스 종료]`);
-      try { child.kill(); } catch { /* gone */ }
+      killTree(child);
+      // 손자가 파이프를 물고 살아남으면 close가 영영 안 온다 — 5초 후 강제 resolve
+      setTimeout(() => settle({
+        ok: false, code: -1, timedOut: true, out,
+        tail: (out + `\n[timeout: ${opts.timeoutMs}ms — 강제 종료]`).slice(-500), cmd,
+      }), 5000);
     }, opts.timeoutMs);
-    child.on('error', (e) => resolve({ ok: false, code: -1, out: out + e.message, tail: (out + e.message).slice(-500), cmd }));
+    child.on('error', (e) => settle({ ok: false, code: -1, out: out + e.message, tail: (out + e.message).slice(-500), cmd }));
     // 주의: 결과 객체는 IPC로 렌더러에 그대로 전달된다 — ChildProcess 같은
     // 직렬화 불가 핸들을 넣으면 "An object could not be cloned"로 죽는다
-    child.on('close', (code) => resolve({
-      ok: code === 0 && !timedOut, code, timedOut, out,
-      tail: (timedOut ? out + `\n[timeout: ${opts.timeoutMs}ms]` : out).slice(-500), cmd,
-    }));
+    child.on('close', (code) => {
+      flushRest();
+      settle({
+        ok: code === 0 && !timedOut, code, timedOut, out,
+        tail: (timedOut ? out + `\n[timeout: ${opts.timeoutMs}ms]` : out).slice(-500), cmd,
+      });
+    });
     if (opts.onSpawn) opts.onSpawn(child);
   });
 }
 
-module.exports = { isWin, extraDirs, envWithPath, resolveCmd, quoteArg, runCmd };
+module.exports = { isWin, extraDirs, envWithPath, resolveCmd, quoteArg, runCmd, killTree, killAll };

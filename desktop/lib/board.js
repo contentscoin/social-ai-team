@@ -49,14 +49,18 @@ function readLane(dir, lane) {
   } catch { /* lane absent */ }
   files.sort((a, b) => b.mtime - a.mtime);
   // aggregate cap: newest 40 text files / 2MB per lane — watch events must stay cheap
+  // perFile: 파일별 정규화 텍스트 — 카드가 "내 카피가 어느 파일에 있는지"를 찾을 수 있게
+  const perFile = [];
   let budget = 2 * 1024 * 1024, count = 0;
   for (const f of files) {
-    if (!/\.(md|txt|json|srt)$/i.test(f.name)) continue;
+    if (!/\.(md|txt|json|srt)$/i.test(f.name)) { perFile.push({ rel: f.rel, name: f.name, norm: norm(f.name) }); continue; }
     if (++count > 40 || (budget -= f.size) < 0) break;
-    text += '\n' + cachedRead(f._fp, { mtimeMs: f.mtime, size: f.size });
+    const t = cachedRead(f._fp, { mtimeMs: f.mtime, size: f.size });
+    text += '\n' + t;
+    perFile.push({ rel: f.rel, name: f.name, norm: norm(f.name + ' ' + t) });
   }
   for (const f of files) delete f._fp;
-  return { text, files };
+  return { text, files, perFile };
 }
 // normalize for fuzzy topic matching (Korean + English, drop spaces/punctuation)
 function norm(s) {
@@ -288,7 +292,16 @@ function buildBoard(dir) {
     if (copyDone && (verdict === 'WARN' || verdict === 'BLOCK')) stage = 'review';
     if (copyDone && verdict === 'PASS') stage = 'ready';
 
-    return { ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform) };
+    // 이 포스트의 근거 파일들 — 인스펙터/카드에서 바로 열 수 있게 (레인 첫 파일이 아니라 실제 매칭)
+    const matchFiles = (laneObj, kind, limit) => (laneObj.perFile || [])
+      .filter((pf) => topicIn(pf.norm, post.topic)).slice(0, limit)
+      .map((pf) => ({ rel: pf.rel, kind }));
+    const files = [...matchFiles(lanes[lane], 'copy', 2)];
+    if (isReel) files.push(...matchFiles(lanes.videos, 'video', 1), ...matchFiles(lanes.storyboards, 'board', 1));
+    files.push(...matchFiles(lanes.creatives, 'creative', 2));
+    if (verdict && (lanes.compliance.perFile || []).length) files.push({ rel: lanes.compliance.perFile[0].rel, kind: 'verdict' });
+
+    return { ...post, lane, isReel, stage, verdict: copyDone ? verdict : null, channel: channelKey(post.platform), files };
   });
   // 채널-ID 캘린더는 IG-1과 TH-1처럼 번호가 겹친다 — 카드 식별은 uid로
   const seenUid = new Set();
