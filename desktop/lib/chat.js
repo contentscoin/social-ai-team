@@ -33,6 +33,8 @@ async function claudeTurn(dir, userMsg, onLine) {
   const sid = config.getSession(dir);
   const prompt = sid ? userMsg : claudeSeed(userMsg);
   const args = ['-p', prompt, '--output-format', 'json', '--permission-mode', 'acceptEdits', '--add-dir', dir];
+  const model = config.getModels().claude;
+  if (model) args.push('--model', model);
   if (sid) args.push('--resume', sid);
 
   const runOnce = (env) => runCmd('claude', args, onLine, { cwd: dir, env });
@@ -57,8 +59,10 @@ async function codexTurn(dir, userMsg, onLine) {
   const started = config.getSession(dir) === 'codex-started';
   // exec 레벨 옵션(-C, -o 등)은 반드시 resume 서브커맨드 앞에 — 뒤에 두면
   // "unexpected argument '-C' found"로 죽는다
+  const model = config.getModels().codex;
   const buildArgs = (extra = []) => {
     const a = ['exec', '-C', dir, '--skip-git-repo-check', '--color', 'never', '-o', outFile, ...extra];
+    if (model) a.push('-c', `model="${model}"`);
     if (started) a.push('resume', '--last');
     a.push(userMsg);
     return a;

@@ -197,5 +197,7 @@ ipcMain.handle('pipe:openTerminal', (_e, dir) => pipeline.openInteractiveTermina
 // ---- Engine + in-app director chat -----------------------------------------
 ipcMain.handle('cfg:getEngine', () => config.getEngine());
 ipcMain.handle('cfg:setEngine', (_e, engine) => config.setEngine(engine).engine);
+ipcMain.handle('cfg:getModels', () => config.getModels());
+ipcMain.handle('cfg:setModel', (_e, engine, model) => config.setModel(engine, model));
 ipcMain.handle('chat:send', (_e, dir, msg) => chat.send(dir, msg, (line) => send('log', { source: 'chat', line })));
 ipcMain.handle('chat:reset', (_e, dir) => chat.reset(dir));

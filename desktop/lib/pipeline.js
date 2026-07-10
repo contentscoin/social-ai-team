@@ -3,6 +3,7 @@
 // interview-style stages open an interactive terminal running /content-director.
 const { spawn } = require('child_process');
 const { runCmd, envWithPath, isWin } = require('./proc');
+const config = require('./config');
 
 const isMac = process.platform === 'darwin';
 
@@ -71,6 +72,8 @@ function runStage(dir, stage, opts = {}, onLine) {
     '--permission-mode', 'acceptEdits',
     '--add-dir', dir,
   ];
+  const model = config.getModels().claude; // 파이프라인은 항상 Claude — 모델만 선택 적용
+  if (model) args.push('--model', model);
   const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
   const runOnce = (env) => runCmd('claude', args, onLine, {
     cwd: dir,

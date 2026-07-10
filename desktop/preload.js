@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('api', {
   engine: {
     get: () => ipcRenderer.invoke('cfg:getEngine'),
     set: (engine) => ipcRenderer.invoke('cfg:setEngine', engine),
+    getModels: () => ipcRenderer.invoke('cfg:getModels'),
+    setModel: (engine, model) => ipcRenderer.invoke('cfg:setModel', engine, model),
   },
   chat: {
     send: (dir, msg) => ipcRenderer.invoke('chat:send', dir, msg),

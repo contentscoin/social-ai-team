@@ -131,7 +131,8 @@ for (const b of $$('#engine-seg button')) b.onclick = async () => {
 };
 function applyEngine() {
   $$('#engine-seg button').forEach((x) => x.classList.toggle('active', x.dataset.engine === S.engine));
-  $('#dock-engine').textContent = S.engine === 'codex' ? 'Codex' : 'Claude';
+  const m = (S.models || {})[S.engine];
+  $('#dock-engine').textContent = (S.engine === 'codex' ? 'Codex' : 'Claude') + (m ? ` · ${m}` : '');
 }
 $('#tb-update').onclick = () => window.api.update.install();
 $('#tb-drawer').onclick = () => openDrawer();
@@ -797,6 +798,25 @@ async function openSettings(section) {
       <div data-body="engine" class="hidden">
         <p class="muted" style="margin-bottom:10px">앱 내 대화·외부 터미널의 엔진을 선택합니다. 파이프라인(팀 오케스트레이션)은 항상 Claude로 동작합니다.</p>
         <div class="seg" id="set-engine"><button data-engine="claude">Claude</button><button data-engine="codex">Codex</button></div>
+        <div style="margin-top:18px;display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center">
+          <b class="small">Claude 모델</b>
+          <input id="set-model-claude" list="dl-claude" placeholder="기본값 (비워두면 CLI 기본 모델)"
+            style="background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12.5px">
+          <b class="small">Codex 모델</b>
+          <input id="set-model-codex" list="dl-codex" placeholder="기본값 (비워두면 CLI 기본 모델)"
+            style="background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12.5px">
+        </div>
+        <datalist id="dl-claude">
+          <option value="sonnet">Sonnet — 빠르고 균형</option>
+          <option value="opus">Opus — 고성능</option>
+          <option value="haiku">Haiku — 초경량·저비용</option>
+        </datalist>
+        <datalist id="dl-codex">
+          <option value="gpt-5.5-codex"></option>
+          <option value="gpt-5.5"></option>
+          <option value="gpt-5-codex"></option>
+        </datalist>
+        <p class="muted small" style="margin-top:10px">Claude 모델은 파이프라인 단계 실행과 Claude 대화에, Codex 모델은 Codex 대화에 적용됩니다. 목록에 없는 모델명도 직접 입력할 수 있습니다.</p>
       </div>
       <div data-body="update" class="hidden">
         <p>현재 버전 <b>v${esc(v)}</b></p>
@@ -815,6 +835,23 @@ async function openSettings(section) {
   };
   bindSetupButtons(sheet, () => refreshEnvBadges(sheet));
   for (const b of $$('#set-engine button')) { b.classList.toggle('active', b.dataset.engine === S.engine); b.onclick = async () => { S.engine = await window.api.engine.set(b.dataset.engine); applyEngine(); $$('#set-engine button').forEach((x) => x.classList.toggle('active', x.dataset.engine === S.engine)); }; }
+  // 엔진별 모델 선택 — 입력 후 포커스 아웃/Enter 시 저장
+  S.models = await window.api.engine.getModels();
+  const bindModel = (id, engine) => {
+    const inp = $(id);
+    inp.value = S.models[engine] || '';
+    const save = async () => {
+      const v = inp.value.trim();
+      if (v === (S.models[engine] || '')) return;
+      S.models = await window.api.engine.setModel(engine, v);
+      applyEngine();
+      toast(`${engine === 'claude' ? 'Claude' : 'Codex'} 모델: ${v || '기본값'}`);
+    };
+    inp.addEventListener('change', save);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  };
+  bindModel('#set-model-claude', 'claude');
+  bindModel('#set-model-codex', 'codex');
   $('#set-upd-check').onclick = async () => { const r = await window.api.update.check(); $('#set-upd-status').textContent = r.ok ? '확인 중…' : r.message; };
   if (section) $(`.settings-nav button[data-sec="${section}"]`, sheet).click();
   openSheet('#sheet-settings');
@@ -910,6 +947,7 @@ $('#channel-scroll').addEventListener('scroll', redrawWire);
 // ---- boot --------------------------------------------------------------------------------------
 (async function boot() {
   S.engine = await window.api.engine.get();
+  S.models = await window.api.engine.getModels();
   applyEngine();
   S.blotato = (await window.api.channels.check()).blotato;
   await refreshClients();
