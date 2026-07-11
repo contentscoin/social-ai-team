@@ -78,7 +78,14 @@ function runCmd(name, args, onLine, opts = {}) {
   return new Promise((resolve) => {
     let child;
     let settled = false;
-    const settle = (r) => { if (settled) return; settled = true; if (child) liveChildren.delete(child); resolve(r); };
+    let killTimer = null;
+    const settle = (r) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer); // 정상 종료 후 타임아웃 타이머가 이벤트 루프를 붙잡지 않게
+      if (child) liveChildren.delete(child);
+      resolve(r);
+    };
     const hasStdin = opts.stdinText != null;
     try {
       child = spawn(line, [], {
@@ -124,7 +131,7 @@ function runCmd(name, args, onLine, opts = {}) {
       for (const rest of [restOut, restErr]) if (rest && rest.trim()) onLine(rest);
       restOut = restErr = '';
     };
-    if (opts.timeoutMs) setTimeout(() => {
+    if (opts.timeoutMs) killTimer = setTimeout(() => {
       if (settled) return;
       timedOut = true;
       if (onLine) onLine(`[timeout ${opts.timeoutMs}ms — 프로세스 종료]`);

@@ -72,6 +72,11 @@ contextBridge.exposeInMainWorld('api', {
   ref: {
     analyze: (dir, urls) => ipcRenderer.invoke('ref:analyze', dir, urls),
   },
+  ob: {
+    questions: () => ipcRenderer.invoke('ob:questions'),
+    followups: (dir, answers) => ipcRenderer.invoke('ob:followups', dir, answers),
+    finalize: (dir, answers, followupAnswers) => ipcRenderer.invoke('ob:finalize', dir, answers, followupAnswers),
+  },
   packs: {
     list: () => ipcRenderer.invoke('packs:list'),
     delete: (file) => ipcRenderer.invoke('packs:delete', file),

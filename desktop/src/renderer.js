@@ -581,15 +581,16 @@ function renderHero() {
     <div class="hero-card"><h3>${title} <span class="badge ${done ? 'ok' : 'no'}" style="float:right">${done ? '완료' : '필요'}</span></h3><p>${desc}</p>
     <div class="btn-grid">${btns}</div></div>`;
   hero.innerHTML =
-    card('① 브랜드 스타일', f.brand, '브랜드의 목소리·팔레트·필러를 담는 팀의 단일 진실 공급원입니다. 사이트가 있다면 분석으로 초안을 먼저 만들 수 있습니다.',
-      `<button data-act="refsite">레퍼런스 사이트 분석</button><button data-act="chat" data-t="브랜드 온보딩 인터뷰를 시작해줘. 질문을 하나씩 해줘.">디렉터와 인터뷰</button><button data-act="term">터미널에서</button>`) +
-    card('② 보이스 프로파일', f.voice, '해요체/합쇼체, 금지 표현, 이모지 정책 — 한국어 카피의 결을 잠급니다.',
-      `<button data-act="chat" data-t="kr-voice-localizer 보이스 프로파일 인테이크를 시작해줘.">디렉터와 인터뷰</button>`) +
+    card('① 브랜드 스타일', f.brand, '브랜드의 목소리·팔레트·필러를 담는 팀의 단일 진실 공급원입니다. 질문지에 한 번에 답하면 인터뷰 없이 완성됩니다.',
+      `<button data-act="obsheet" class="cta" style="padding:8px 14px">📋 질문지로 온보딩 (빠름)</button><button data-act="refsite">레퍼런스 사이트 분석</button><button data-act="chat" data-t="브랜드 온보딩 인터뷰를 시작해줘. 질문을 하나씩 해줘.">대화형 인터뷰</button>`) +
+    card('② 보이스 프로파일', f.voice, '해요체/합쇼체, 금지 표현, 이모지 정책 — 질문지 온보딩이 초안까지 함께 만듭니다.',
+      `<button data-act="chat" data-t="kr-voice-localizer 보이스 프로파일 인테이크를 시작해줘.">정밀 인테이크 (선택)</button>`) +
     card('③ 콘텐츠 캘린더', f.calendar, '이번 달 포스트 편성표. 이게 생기면 보드에 카드가 나타납니다.',
       `<button data-act="stage" data-s="calendar" ${f.brand ? '' : 'disabled title="브랜드 스타일이 먼저 필요합니다"'}>캘린더 생성 실행</button>`);
   for (const btn of $$('#hero button[data-act]')) {
     btn.onclick = (e) => {
       if (btn.dataset.act === 'chat') prefillChat(btn.dataset.t);
+      else if (btn.dataset.act === 'obsheet') openOnboardSheet();
       else if (btn.dataset.act === 'term') window.api.pipe.openTerminal(S.client.dir);
       else if (btn.dataset.act === 'stage') runStage(btn.dataset.s);
       else if (btn.dataset.act === 'refsite') {
@@ -608,6 +609,128 @@ function renderHero() {
       }
     };
   }
+}
+
+// ---- 질문지 온보딩 시트 (1차 폼 → 2차 일괄 후속질문 → 합성) ---------------------------------
+async function openOnboardSheet() {
+  if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+  const sheet = $('#sheet-onboard');
+  const dir = S.client.dir;
+  const qs = await window.api.ob.questions();
+  if (!Array.isArray(qs)) { toast('질문지를 불러오지 못했습니다'); return; }
+
+  const field = (it) => {
+    if (it.type === 'multi') return `<div class="ob-chips" data-id="${it.id}">${it.options.map((o) => `<button type="button" class="chip ob-opt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+    if (it.type === 'choice') return `<div class="ob-chips ob-single" data-id="${it.id}">${it.options.map((o) => `<button type="button" class="chip ob-opt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+    if (it.type === 'textarea') return `<textarea class="rp-input ob-in" data-id="${it.id}" rows="2" placeholder="${esc(it.ph || '')}"></textarea>`;
+    return `<input class="rp-input ob-in" data-id="${it.id}" placeholder="${esc(it.ph || '')}">`;
+  };
+  sheet.innerHTML = `
+    <div class="sheet-head"><h2>질문지 온보딩 — ${esc(S.client.name)}</h2>
+      <span class="chip tiny muted">아는 것만 답하세요 — 빈칸은 레퍼런스 분석과 기본값으로 보완됩니다</span>
+      <button class="icon-btn" id="ob-close"><svg><use href="#i-close"/></svg></button></div>
+    <div class="sheet-body" id="ob-body">
+      ${qs.map((sec) => `<div class="ob-section"><b>${esc(sec.section)}</b>
+        ${sec.items.map((it) => `<div class="ob-row"><label class="small">${esc(it.q)}</label>${field(it)}</div>`).join('')}
+      </div>`).join('')}
+    </div>
+    <div class="appr-foot">
+      <span class="muted small" id="ob-status"></span>
+      <div style="flex:1"></div>
+      <button id="ob-next" class="accent" style="padding:10px 18px">다음 → 후속 질문 (한 번에)</button>
+    </div>`;
+  $('#ob-close').onclick = closeOverlay;
+  // 칩 토글 (multi) / 단일 선택 (choice)
+  for (const box of $$('.ob-chips', sheet)) {
+    for (const b of $$('.ob-opt', box)) b.onclick = () => {
+      if (box.classList.contains('ob-single')) $$('.ob-opt', box).forEach((x) => x.classList.toggle('on', x === b && !b.classList.contains('on')));
+      else b.classList.toggle('on');
+    };
+  }
+  const collect = (root) => {
+    const answers = {};
+    for (const inp of $$('.ob-in', root)) if (inp.value.trim()) answers[inp.dataset.id] = inp.value.trim();
+    for (const box of $$('.ob-chips', root)) {
+      const on = $$('.ob-opt.on', box).map((b) => b.dataset.v);
+      if (on.length) answers[box.dataset.id] = box.classList.contains('ob-single') ? on[0] : on;
+    }
+    return answers;
+  };
+
+  $('#ob-next').onclick = async () => {
+    const answers = collect(sheet);
+    if (!Object.keys(answers).length && !confirm2('아무것도 답하지 않았습니다. 레퍼런스 분석과 기본값만으로 진행할까요?')) return;
+    const btn = $('#ob-next');
+    btn.disabled = true; btn.textContent = '후속 질문 생성 중… (1회 생각으로 한꺼번에)';
+    $('#ob-status').textContent = '답변의 공백·모호한 부분만 골라 묻습니다';
+    let fu = { questions: [] };
+    try { fu = await window.api.ob.followups(dir, answers); } catch { /* 후속 없이 진행 */ }
+    if (fu && fu.error) { toast(fu.error); btn.disabled = false; btn.textContent = '다음 → 후속 질문 (한 번에)'; return; }
+    renderFollowups(answers, (fu && fu.questions) || [], fu && fu.note);
+  };
+
+  // 간단 확인 (window.confirm은 Electron에서 포커스 문제가 있어 인라인로).
+  // 답변을 입력하고 누르면 확인 플래그를 초기화한다 — 한 번 빈손으로 눌렀다고 영구 통과되지 않게.
+  function confirm2(msg) {
+    const btn = $('#ob-next');
+    const again = btn.dataset.again === '1';
+    btn.dataset.again = '1';
+    setTimeout(() => { btn.dataset.again = '0'; }, 8000); // 8초 내 재클릭만 인정
+    if (!again) $('#ob-status').textContent = msg + ' — 다시 누르면 진행합니다';
+    return again;
+  }
+
+  function renderFollowups(answers, questions, note) {
+    if (!questions.length) { runFinalize(answers, {}); return; }
+    $('#ob-body').innerHTML = `
+      <p class="muted small" style="margin-bottom:12px">답변을 검토해 <b>${questions.length}개</b>만 더 묻습니다 — 전부 한 번에 답하면 끝납니다.${note ? ' (' + esc(note) + ')' : ''}</p>
+      ${questions.map((f) => `<div class="ob-row"><label class="small">${esc(f.q)}</label>
+        ${f.type === 'choice'
+          ? `<div class="ob-chips ob-single" data-id="${esc(f.id)}" data-q="${esc(f.q)}">${(f.options || []).map((o) => `<button type="button" class="chip ob-opt" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>
+             <input class="rp-input ob-in" data-id="${esc(f.id)}__free" data-q="${esc(f.q)}" placeholder="또는 직접 입력">`
+          : `<input class="rp-input ob-in" data-id="${esc(f.id)}" data-q="${esc(f.q)}" placeholder="모르면 비워두세요">`}
+      </div>`).join('')}`;
+    for (const box of $$('.ob-chips', sheet)) for (const b of $$('.ob-opt', box)) b.onclick = () => $$('.ob-opt', box).forEach((x) => x.classList.toggle('on', x === b && !b.classList.contains('on')));
+    const btn = $('#ob-next');
+    btn.disabled = false; btn.textContent = '온보딩 완성 (일괄 합성)';
+    $('#ob-status').textContent = '';
+    btn.onclick = () => {
+      const fa = {};
+      for (const inp of $$('.ob-in', $('#ob-body'))) if (inp.value.trim()) fa[inp.dataset.q || inp.dataset.id] = inp.value.trim();
+      for (const box of $$('.ob-chips', $('#ob-body'))) {
+        const on = $$('.ob-opt.on', box)[0];
+        if (on && !fa[box.dataset.q]) fa[box.dataset.q || box.dataset.id] = on.dataset.v;
+      }
+      runFinalize(answers, fa);
+    };
+  }
+
+  async function runFinalize(answers, followupAnswers) {
+    const btn = $('#ob-next');
+    btn.disabled = true; btn.textContent = '합성 중… brand-style + 보이스 초안';
+    $('#ob-status').textContent = '질의응답 없이 문서를 한 번에 만듭니다 (수 분 소요)';
+    try {
+      const r = await window.api.ob.finalize(dir, answers, followupAnswers);
+      if (r && r.ok) {
+        $('#ob-body').innerHTML = `<div class="hero-card" style="margin:20px auto;max-width:460px"><h3>✔ 온보딩 완료</h3>
+          <p style="line-height:1.7">brand-style.md가 준비됐습니다.${r.voiceDrafted ? '<br>kr-voice-profile.md 초안도 함께 생성됐습니다.' : ''}<br>
+          답변 원본은 <code>${esc(r.record)}</code>에 저장됐습니다.<br><br>이제 게이트 바에서 <b>캘린더 생성</b>을 실행하세요.</p></div>`;
+        btn.textContent = '닫기'; btn.disabled = false;
+        btn.onclick = () => { closeOverlay(); refreshBoard(true); };
+        refreshBoard(false);
+      } else {
+        toast((r && r.error) || '합성 실패');
+        btn.disabled = false; btn.textContent = '다시 시도';
+        btn.onclick = () => runFinalize(answers, followupAnswers);
+      }
+    } catch (e) {
+      toast('합성 실패: ' + e.message);
+      btn.disabled = false; btn.textContent = '다시 시도';
+      btn.onclick = () => runFinalize(answers, followupAnswers);
+    }
+  }
+
+  openSheet('#sheet-onboard');
 }
 
 // ---- gates (존 D) ----------------------------------------------------------------------

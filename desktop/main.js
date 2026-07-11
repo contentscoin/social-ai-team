@@ -477,6 +477,34 @@ ipcMain.handle('ref:analyze', async (_e, dir, urls) => {
   } finally { locks.release(dir, 'stage'); }
 });
 
+// ---- 질문지 온보딩 (1차 폼 → 2차 일괄 후속질문 → 일괄 합성) -------------------------
+const onboard = require('./lib/onboard');
+ipcMain.handle('ob:questions', safe(() => onboard.QUESTIONNAIRE));
+ipcMain.handle('ob:followups', async (_e, dir, answers) => {
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  try { return await onboard.followups(dir, answers, (line) => send('log', { source: 'onboard', line, dir })); }
+  catch (e) { return { ok: true, questions: [], note: String(e && e.message || e) }; }
+  finally { locks.release(dir, 'stage'); }
+});
+ipcMain.handle('ob:finalize', async (_e, dir, answers, followupAnswers) => {
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  const startedAt = Date.now();
+  try {
+    const r = await onboard.finalize(dir, answers, followupAnswers, (line) => send('log', { source: 'onboard', line, dir }));
+    history.append({
+      dir, kind: 'stage', stage: 'onboard', engine: 'claude', model: config.getModels().claude,
+      ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: '질문지 온보딩',
+    });
+    if (r.ok && Date.now() - startedAt > 30_000) notify('온보딩 완료', 'brand-style.md가 준비됐습니다');
+    setTimeout(pushBoard, 300);
+    return r;
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  } finally { locks.release(dir, 'stage'); }
+});
+
 // ---- Engine + in-app director chat -----------------------------------------
 ipcMain.handle('cfg:getEngine', safe(() => config.getEngine()));
 ipcMain.handle('cfg:setEngine', safe((_e, engine) => config.setEngine(engine).engine));
