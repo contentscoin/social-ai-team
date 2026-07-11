@@ -52,11 +52,40 @@ const QUESTIONNAIRE = [
   },
 ];
 
-function parseJsonLoose(out) {
-  try { return JSON.parse(String(out).trim()); } catch { /* fall through */ }
-  const m = String(out).match(/\[[\s\S]*\]|\{[\s\S]*\}/);
-  if (m) { try { return JSON.parse(m[0]); } catch { /* nope */ } }
+// 균형 괄호 스캔 — 프리앰블의 [규칙]·stderr의 [WARN] 같은 가짜 괄호를 건너뛰고
+// 실제로 파싱되는 첫 JSON 블록을 찾는다 (탐욕 정규식은 첫 '['~마지막 ']'를 통째로 잡아 실패)
+function extractBalanced(s, open, close) {
+  let start = -1, depth = 0, inStr = false, escd = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (escd) escd = false;
+      else if (c === '\\') escd = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"' && depth > 0) { inStr = true; continue; }
+    if (c === open) { if (depth === 0) start = i; depth++; }
+    else if (c === close && depth > 0) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try { return JSON.parse(s.slice(start, i + 1)); } catch { start = -1; }
+      }
+    }
+  }
   return null;
+}
+function parseJsonLoose(out) {
+  const s = String(out);
+  // 1) 코드펜스 안 JSON 우선 (모델이 가장 흔히 쓰는 형태)
+  const fence = s.match(/```(?:json)?\s*([\[{][\s\S]*?)```/i);
+  if (fence) { try { return JSON.parse(fence[1].trim()); } catch { /* fall through */ } }
+  try { return JSON.parse(s.trim()); } catch { /* fall through */ }
+  return extractBalanced(s, '[', ']') ?? extractBalanced(s, '{', '}');
+}
+// 개행·마크다운 문법을 접어 한 줄로 — textarea 답변의 2번째 줄이 고아 항목/가짜 섹션이 되지 않게
+function foldAnswer(v) {
+  return String(v).replace(/\s*\r?\n\s*/g, ' / ').replace(/\s+/g, ' ').trim();
 }
 function answersToMd(title, answers) {
   const lines = [`## ${title}`];
@@ -64,7 +93,7 @@ function answersToMd(title, answers) {
     for (const it of sec.items) {
       const v = answers[it.id];
       if (v == null || v === '' || (Array.isArray(v) && !v.length)) continue;
-      lines.push(`- ${it.q}: ${Array.isArray(v) ? v.join(', ') : v}`);
+      lines.push(`- ${it.q}: ${Array.isArray(v) ? v.map(foldAnswer).join(', ') : foldAnswer(v)}`);
     }
   }
   return lines.length > 1 ? lines.join('\n') : `## ${title}\n- (답변 없음)`;
@@ -96,9 +125,13 @@ async function followups(dir, answers, onLine) {
     (ref ? `\n[레퍼런스 사이트 분석 (이미 아는 정보)]\n${ref}\n` : '');
   const r = await claude(dir, prompt, 3 * 60_000);
   if (!r.ok) return { ok: true, questions: [], note: '후속 질문 생성 실패 — 1차 답변만으로 진행합니다' };
-  // claude -p 기본 출력은 텍스트 — JSON 배열을 관대하게 추출
-  const arr = parseJsonLoose(r.out);
-  const questions = (Array.isArray(arr) ? arr : [])
+  // claude -p 기본 출력은 텍스트 — JSON 배열을 관대하게 추출.
+  // 모델이 {"questions":[...]}로 감싸는 흔한 이탈도 수용하고, 파싱 실패는 "질문 0개"와 구별해 note로 알린다.
+  const parsed = parseJsonLoose(r.out);
+  const arr = Array.isArray(parsed) ? parsed
+    : (parsed && Array.isArray(parsed.questions) ? parsed.questions : null);
+  if (arr === null) return { ok: true, questions: [], note: '후속 질문 응답을 해석하지 못했습니다 — 1차 답변만으로 진행합니다' };
+  const questions = arr
     .filter((x) => x && typeof x.q === 'string' && x.q.length > 3)
     .slice(0, 6)
     .map((x, i) => ({
@@ -121,7 +154,13 @@ async function finalize(dir, answers, followupAnswers, onLine) {
     (Object.keys(followupAnswers || {}).length
       ? '## 2차 후속 질문 답변\n' + Object.entries(followupAnswers).map(([q, a]) => `- ${q}: ${a}`).join('\n')
       : '## 2차 후속 질문 답변\n- (없음)');
-  fs.writeFileSync(path.join(ctxDir, 'onboarding-answers.md'), record);
+  // 재실행 시 이전 기록 보존 — "재실행·감사용" 기록을 덮어쓰지 않는다
+  const recPath = path.join(ctxDir, 'onboarding-answers.md');
+  if (fs.existsSync(recPath)) {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    try { fs.renameSync(recPath, path.join(ctxDir, `onboarding-answers-${ts}.md`)); } catch { /* best effort */ }
+  }
+  fs.writeFileSync(recPath, record);
   const brandPath = path.join(ctxDir, 'brand-style.md');
   const hasBrand = fs.existsSync(brandPath);
   const brandMtime0 = hasBrand ? fs.statSync(brandPath).mtimeMs : 0;
@@ -161,4 +200,4 @@ async function finalize(dir, answers, followupAnswers, onLine) {
   };
 }
 
-module.exports = { QUESTIONNAIRE, followups, finalize };
+module.exports = { QUESTIONNAIRE, followups, finalize, _parseJsonLoose: parseJsonLoose, _foldAnswer: foldAnswer };

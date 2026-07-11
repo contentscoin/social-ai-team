@@ -15,7 +15,7 @@ function release(dir, owner) {
 function holder(dir) { return locks.get(dir) || null; }
 
 // 사용자 안내문 — 누가 잡고 있는지 한국어로
-const OWNER_LABEL = { chat: '디렉터 채팅', stage: '파이프라인 단계', autopilot: '오토파일럿' };
+const OWNER_LABEL = { chat: '디렉터 채팅', stage: '파이프라인 단계', autopilot: '오토파일럿', onboard: '질문지 온보딩', reference: '레퍼런스 사이트 분석' };
 function busyMessage(dir) {
   const h = holder(dir);
   if (!h) return null;

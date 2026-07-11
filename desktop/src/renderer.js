@@ -612,10 +612,14 @@ function renderHero() {
 }
 
 // ---- 질문지 온보딩 시트 (1차 폼 → 2차 일괄 후속질문 → 합성) ---------------------------------
+let obSeq = 0; // 시트를 닫고 다시 열었을 때 이전 시트의 미완료 async 콜백이 새 시트를 덮지 않게
 async function openOnboardSheet() {
   if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+  const session = ++obSeq;
   const sheet = $('#sheet-onboard');
   const dir = S.client.dir;
+  // 이 시트 인스턴스가 아직 화면의 주인인가 — 아니면 DOM을 건드리지 않는다
+  const live = () => session === obSeq && !sheet.classList.contains('hidden');
   const qs = await window.api.ob.questions();
   if (!Array.isArray(qs)) { toast('질문지를 불러오지 못했습니다'); return; }
 
@@ -665,6 +669,8 @@ async function openOnboardSheet() {
     $('#ob-status').textContent = '답변의 공백·모호한 부분만 골라 묻습니다';
     let fu = { questions: [] };
     try { fu = await window.api.ob.followups(dir, answers); } catch { /* 후속 없이 진행 */ }
+    // 시트가 닫혔거나 새 시트가 열렸으면 여기서 멈춘다 — 자동 합성으로 이어가지 않는다
+    if (!live()) { toast('온보딩 시트가 닫혀 진행을 중단했습니다 — 다시 열면 답변부터 재시작합니다'); return; }
     if (fu && fu.error) { toast(fu.error); btn.disabled = false; btn.textContent = '다음 → 후속 질문 (한 번에)'; return; }
     renderFollowups(answers, (fu && fu.questions) || [], fu && fu.note);
   };
@@ -681,7 +687,12 @@ async function openOnboardSheet() {
   }
 
   function renderFollowups(answers, questions, note) {
-    if (!questions.length) { runFinalize(answers, {}); return; }
+    if (!questions.length) {
+      // 실패로 인한 0개(note 있음)와 "답변 충분" 0개를 구별해 보이게
+      toast(note || '답변이 충분해 후속 질문 없이 바로 합성합니다');
+      runFinalize(answers, {});
+      return;
+    }
     $('#ob-body').innerHTML = `
       <p class="muted small" style="margin-bottom:12px">답변을 검토해 <b>${questions.length}개</b>만 더 묻습니다 — 전부 한 번에 답하면 끝납니다.${note ? ' (' + esc(note) + ')' : ''}</p>
       ${questions.map((f) => `<div class="ob-row"><label class="small">${esc(f.q)}</label>
@@ -711,6 +722,12 @@ async function openOnboardSheet() {
     $('#ob-status').textContent = '질의응답 없이 문서를 한 번에 만듭니다 (수 분 소요)';
     try {
       const r = await window.api.ob.finalize(dir, answers, followupAnswers);
+      if (!live()) {
+        // 시트가 닫혔어도 합성은 main에서 완료됐다 — 결과만 알리고 DOM은 건드리지 않는다
+        if (r && r.ok) { toast('✔ 온보딩이 백그라운드에서 완료됐습니다 — brand-style.md 준비됨'); if (S.client && S.client.dir === dir) refreshBoard(false); }
+        else toast('온보딩 합성 실패: ' + ((r && r.error) || '알 수 없음'));
+        return;
+      }
       if (r && r.ok) {
         $('#ob-body').innerHTML = `<div class="hero-card" style="margin:20px auto;max-width:460px"><h3>✔ 온보딩 완료</h3>
           <p style="line-height:1.7">brand-style.md가 준비됐습니다.${r.voiceDrafted ? '<br>kr-voice-profile.md 초안도 함께 생성됐습니다.' : ''}<br>
@@ -724,6 +741,7 @@ async function openOnboardSheet() {
         btn.onclick = () => runFinalize(answers, followupAnswers);
       }
     } catch (e) {
+      if (!live()) { toast('온보딩 합성 실패: ' + e.message); return; }
       toast('합성 실패: ' + e.message);
       btn.disabled = false; btn.textContent = '다시 시도';
       btn.onclick = () => runFinalize(answers, followupAnswers);

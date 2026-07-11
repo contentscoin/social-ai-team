@@ -460,7 +460,7 @@ ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
 const reference = require('./lib/reference');
 ipcMain.handle('ref:analyze', async (_e, dir, urls) => {
   // claude가 같은 폴더에 파일을 쓴다 — 채팅/스테이지와 상호 배제
-  const lock = locks.acquire(dir, 'stage');
+  const lock = locks.acquire(dir, 'reference');
   if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
   const startedAt = Date.now();
   try {
@@ -474,21 +474,21 @@ ipcMain.handle('ref:analyze', async (_e, dir, urls) => {
     return r;
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };
-  } finally { locks.release(dir, 'stage'); }
+  } finally { locks.release(dir, 'reference'); }
 });
 
 // ---- 질문지 온보딩 (1차 폼 → 2차 일괄 후속질문 → 일괄 합성) -------------------------
 const onboard = require('./lib/onboard');
 ipcMain.handle('ob:questions', safe(() => onboard.QUESTIONNAIRE));
 ipcMain.handle('ob:followups', async (_e, dir, answers) => {
-  const lock = locks.acquire(dir, 'stage');
+  const lock = locks.acquire(dir, 'onboard');
   if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
   try { return await onboard.followups(dir, answers, (line) => send('log', { source: 'onboard', line, dir })); }
   catch (e) { return { ok: true, questions: [], note: String(e && e.message || e) }; }
-  finally { locks.release(dir, 'stage'); }
+  finally { locks.release(dir, 'onboard'); }
 });
 ipcMain.handle('ob:finalize', async (_e, dir, answers, followupAnswers) => {
-  const lock = locks.acquire(dir, 'stage');
+  const lock = locks.acquire(dir, 'onboard');
   if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
   const startedAt = Date.now();
   try {
@@ -502,7 +502,7 @@ ipcMain.handle('ob:finalize', async (_e, dir, answers, followupAnswers) => {
     return r;
   } catch (e) {
     return { ok: false, error: String(e && e.message || e) };
-  } finally { locks.release(dir, 'stage'); }
+  } finally { locks.release(dir, 'onboard'); }
 });
 
 // ---- Engine + in-app director chat -----------------------------------------
