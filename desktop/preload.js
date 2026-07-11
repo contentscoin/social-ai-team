@@ -69,6 +69,9 @@ contextBridge.exposeInMainWorld('api', {
   prompt: {
     compile: (dir, job) => ipcRenderer.invoke('prompt:compile', dir, job),
   },
+  ref: {
+    analyze: (dir, urls) => ipcRenderer.invoke('ref:analyze', dir, urls),
+  },
   packs: {
     list: () => ipcRenderer.invoke('packs:list'),
     delete: (file) => ipcRenderer.invoke('packs:delete', file),

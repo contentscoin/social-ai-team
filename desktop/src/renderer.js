@@ -169,13 +169,19 @@ function bindAddPop() {
   $('#pop-new').onclick = () => {
     $('#popover').innerHTML = `<b>새 클라이언트</b>
       <input id="pop-name" placeholder="이름 (영문/한글)" style="width:100%;margin-top:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:12.5px">
+      <textarea id="pop-refs" rows="3" placeholder="레퍼런스 사이트 URL (선택, 줄바꿈 구분)&#10;홈페이지·블로그·경쟁사 — 넣으면 분석해 브랜드 초안을 준비합니다" style="width:100%;margin-top:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:12px;resize:vertical"></textarea>
       <button id="pop-create" style="margin-top:8px;width:100%">만들기</button>`;
     const go = async () => {
       const name = $('#pop-name').value.trim();
       if (!name) return;
+      const urls = $('#pop-refs').value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
       hidePopover();
       const r = await window.api.ws.create(name);
-      if (r.ok) { await refreshClients(); selectClient(r); }
+      if (r.ok) {
+        await refreshClients();
+        await selectClient(r);
+        if (urls.length) runRefAnalysis(r.dir, urls);
+      }
       else toast('생성 실패: ' + (r.error || '이름을 확인하세요'));
     };
     $('#pop-create').onclick = go;
@@ -187,6 +193,21 @@ function bindAddPop() {
     const r = await window.api.ws.pickFolder();
     if (r && r.ok) { await refreshClients(); selectClient(r); }
   };
+}
+// 레퍼런스 사이트 분석 실행 — 수집(스냅샷)과 종합(claude)을 로그 탭으로 중계
+async function runRefAnalysis(dir, urls) {
+  switchDock('log');
+  toast(`레퍼런스 사이트 ${urls.length}개 분석 시작 — 로그 탭에서 진행 확인`);
+  try {
+    const r = await window.api.ref.analyze(dir, urls);
+    if (r && r.ok) {
+      if (r.brandDrafted) toast('✔ 분석 완료 — brand-style.md 초안이 생성됐습니다 (온보딩 인터뷰로 확정하세요)');
+      else if (r.partial) toast(r.note || '스냅샷만 저장됨 — 종합 분석은 재시도 필요');
+      else toast(`✔ 분석 완료 — ${r.analysis || 'context/references/'} (스냅샷 ${r.snapshots}개)`);
+      if (r.failed && r.failed.length) logLine('reference', '수집 실패: ' + r.failed.join(' / '));
+    } else toast('분석 실패: ' + ((r && r.error) || '알 수 없음'));
+  } catch (e) { toast('분석 실패: ' + e.message); }
+  if (S.client && S.client.dir === dir) refreshBoard(false);
 }
 $('#rail-folder').onclick = () => S.client && window.api.ws.openFolder(S.client.dir);
 $('#rail-term').onclick = () => S.client && window.api.pipe.openTerminal(S.client.dir);
@@ -560,17 +581,31 @@ function renderHero() {
     <div class="hero-card"><h3>${title} <span class="badge ${done ? 'ok' : 'no'}" style="float:right">${done ? '완료' : '필요'}</span></h3><p>${desc}</p>
     <div class="btn-grid">${btns}</div></div>`;
   hero.innerHTML =
-    card('① 브랜드 스타일', f.brand, '브랜드의 목소리·팔레트·필러를 담는 팀의 단일 진실 공급원입니다.',
-      `<button data-act="chat" data-t="브랜드 온보딩 인터뷰를 시작해줘. 질문을 하나씩 해줘.">디렉터와 인터뷰</button><button data-act="term">터미널에서</button>`) +
+    card('① 브랜드 스타일', f.brand, '브랜드의 목소리·팔레트·필러를 담는 팀의 단일 진실 공급원입니다. 사이트가 있다면 분석으로 초안을 먼저 만들 수 있습니다.',
+      `<button data-act="refsite">레퍼런스 사이트 분석</button><button data-act="chat" data-t="브랜드 온보딩 인터뷰를 시작해줘. 질문을 하나씩 해줘.">디렉터와 인터뷰</button><button data-act="term">터미널에서</button>`) +
     card('② 보이스 프로파일', f.voice, '해요체/합쇼체, 금지 표현, 이모지 정책 — 한국어 카피의 결을 잠급니다.',
       `<button data-act="chat" data-t="kr-voice-localizer 보이스 프로파일 인테이크를 시작해줘.">디렉터와 인터뷰</button>`) +
     card('③ 콘텐츠 캘린더', f.calendar, '이번 달 포스트 편성표. 이게 생기면 보드에 카드가 나타납니다.',
       `<button data-act="stage" data-s="calendar" ${f.brand ? '' : 'disabled title="브랜드 스타일이 먼저 필요합니다"'}>캘린더 생성 실행</button>`);
   for (const btn of $$('#hero button[data-act]')) {
-    btn.onclick = () => {
+    btn.onclick = (e) => {
       if (btn.dataset.act === 'chat') prefillChat(btn.dataset.t);
       else if (btn.dataset.act === 'term') window.api.pipe.openTerminal(S.client.dir);
       else if (btn.dataset.act === 'stage') runStage(btn.dataset.s);
+      else if (btn.dataset.act === 'refsite') {
+        if (popover(e.currentTarget, `<b>레퍼런스 사이트 분석</b>
+          <p class="muted small" style="margin:6px 0">홈페이지·블로그·경쟁사 URL을 넣으면 수집·분석해 브랜드 초안을 준비합니다. (SNS 페이지는 수집이 제한될 수 있어요)</p>
+          <textarea id="pop-ref-urls" rows="3" placeholder="https://…&#10;줄바꿈으로 여러 개" style="width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 9px;color:var(--text);font-size:12px;resize:vertical"></textarea>
+          <button id="pop-ref-go" style="margin-top:8px;width:100%">분석 시작</button>`)) {
+          $('#pop-ref-go').onclick = () => {
+            const urls = $('#pop-ref-urls').value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+            if (!urls.length) { toast('URL을 입력하세요'); return; }
+            hidePopover();
+            runRefAnalysis(S.client.dir, urls);
+          };
+          $('#pop-ref-urls').focus();
+        }
+      }
     };
   }
 }

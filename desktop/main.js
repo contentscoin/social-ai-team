@@ -456,6 +456,27 @@ ipcMain.handle('packs:delete', safe((_e, file) => promptlab.deletePack(file)));
 ipcMain.handle('oc:search', safe((_e, query) => opencrab.search(query)));
 ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
 
+// ---- 레퍼런스 사이트 분석 (온보딩 준비 레인) ---------------------------------------
+const reference = require('./lib/reference');
+ipcMain.handle('ref:analyze', async (_e, dir, urls) => {
+  // claude가 같은 폴더에 파일을 쓴다 — 채팅/스테이지와 상호 배제
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  const startedAt = Date.now();
+  try {
+    const r = await reference.analyze(dir, urls, (line) => send('log', { source: 'reference', line, dir }));
+    history.append({
+      dir, kind: 'stage', stage: 'reference', engine: 'claude', model: config.getModels().claude,
+      ok: !!r.ok && !r.partial, ms: Date.now() - startedAt, startedAt, note: (urls || []).join(', ').slice(0, 80),
+    });
+    if (r.ok && Date.now() - startedAt > 30_000) notify('레퍼런스 분석 완료', r.brandDrafted ? 'brand-style.md 초안이 생성됐습니다' : '분석 리포트가 준비됐습니다');
+    setTimeout(pushBoard, 300);
+    return r;
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  } finally { locks.release(dir, 'stage'); }
+});
+
 // ---- Engine + in-app director chat -----------------------------------------
 ipcMain.handle('cfg:getEngine', safe(() => config.getEngine()));
 ipcMain.handle('cfg:setEngine', safe((_e, engine) => config.setEngine(engine).engine));
