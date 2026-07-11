@@ -1124,6 +1124,9 @@ async function openRenderPanel(p) {
     <p class="muted small" style="margin-top:4px">컴파일러는 브랜드 팔레트·카피의 VISUAL DIRECTION·프롬프트 팩을 재료로 씁니다. 결과는 수정 가능합니다.</p>`;
   const syncKind = (kind) => {
     $('#rp-provider').innerHTML = opts(kind);
+    // 기본 선택 = availability 순서상 첫 번째 사용 가능 프로바이더 (이미지는 Codex 계열이 최우선)
+    const firstOk = Object.entries(av[kind]).find(([, v]) => v.ok);
+    if (firstOk) $('#rp-provider').value = firstOk[0];
     $('#rp-dur').classList.toggle('hidden', kind !== 'video');
     if (kind === 'video' && p.isReel) $('#rp-size').value = 'story';
   };
@@ -1131,7 +1134,7 @@ async function openRenderPanel(p) {
     $$('#rp-kind button').forEach((x) => x.classList.toggle('active', x === b));
     syncKind(b.dataset.k);
   };
-  if (kind0 === 'video') syncKind('video');
+  syncKind(kind0); // 첫 표시에도 기본 프로바이더 선택 적용 (이미지 = Codex 계열 우선)
   // 컴파일 — 기획 브리프를 시각 언어 프롬프트로 (브랜드 팔레트 + VISUAL DIRECTION + 팩)
   let compiled = false; // 사용자가 이후 브리프를 고치면 다시 false
   $('#rp-prompt').addEventListener('input', () => { compiled = false; });

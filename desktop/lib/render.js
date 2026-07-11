@@ -473,10 +473,12 @@ const VIDEO_PROVIDERS = {
 // 사용 가능 여부 — 설정 UI와 생성 패널의 프로바이더 선택지에 쓴다
 function availability(env) {
   return {
+    // 순서 = 기본 선택 우선순위 (렌더러가 첫 번째 사용 가능 항목을 기본값으로 고른다)
+    // 운영자 지정: 이미지는 Codex 계열 imagegen이 기본
     image: {
-      'claude-svg': { ok: true, label: '클로드 디자인 (SVG→PNG · 추가 키 불필요)' },
-      'openai-image': { ok: secrets.has('openai', ['apiKey']) || !!process.env.OPENAI_API_KEY, label: 'OpenAI gpt-image-1 (코덱스 이미지)' },
-      ima2: { ok: !!(env && env.ima2), label: 'ima2 (ChatGPT OAuth)' },
+      'openai-image': { ok: secrets.has('openai', ['apiKey']) || !!process.env.OPENAI_API_KEY, label: 'Codex 이미지 · gpt-image-1 (기본)' },
+      ima2: { ok: !!(env && env.ima2), label: 'Codex 이미지 · ima2 (ChatGPT OAuth)' },
+      'claude-svg': { ok: true, label: '클로드 디자인 — 한글 타이포 카드 전용 (SVG→PNG)' },
       comfyui: { ok: secrets.has('comfyui', ['url', 'workflowPath']), label: 'ComfyUI (오픈소스 로컬)' },
       custom: { ok: secrets.has('custom-video', ['url']), label: '커스텀 HTTP' },
     },

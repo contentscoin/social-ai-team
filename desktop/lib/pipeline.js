@@ -40,13 +40,16 @@ const STAGES = {
     label: '비주얼 브리프 (1차 호출)',
     prompt:
       'creative-designer 에이전트를 Invocation 1 (Brief)로 디스패치하라: 카피 파일들의 VISUAL DIRECTION 필드를 수집해 ' +
-      '포스트별 CREATIVE BRIEF만 작성해 반환받아 출력하고 종료하라. 이미지 생성은 하지 말라 (브리프 승인은 앱에서 진행한다).',
+      '포스트별 CREATIVE BRIEF를 작성해 반환받아 출력하고 종료하라. 각 브리프는 반드시 sop/creative-designer/prompt-packs/image-prompt-pack.md의 ' +
+      '골격(SUBJECT→SETTING→COMPOSITION→LIGHTING→STYLE→COLOR→TEXT RULE)을 따른 영문 최종 생성 프롬프트 1개로 끝나야 한다 — ' +
+      '기획 언어(목표/필러/앵글) 금지, 이미지 내 한글 텍스트 금지. 이미지 생성은 하지 말라 (브리프 승인은 앱에서 진행한다).',
   },
   'visuals-generate': {
     label: '비주얼 생성 (2차 호출 — 브리프 승인 후)',
     prompt:
       '운영자가 앱에서 CREATIVE BRIEF를 승인했다. creative-designer 에이전트를 Invocation 2 (Generation)로 디스패치하라: ' +
-      '승인된 브리프대로 생성하고 (렌더 경로 우선순위: Nano Banana MCP → codex MCP 위임 → codex_render.sh), ' +
+      '승인된 브리프의 최종 프롬프트 그대로 생성하라. 렌더 경로 우선순위는 Codex 계열 이미지 생성이 기본이다: ' +
+      '① ima2 (ChatGPT OAuth, ima2 serve 자동 기동) → ② codex MCP 위임/codex_render.sh → ③ Nano Banana MCP (편집·앵커링 작업은 Nano Banana 전용). ' +
       'image-qa SOP를 적용한 뒤 파일 목록과 QA 결과만 출력하고 종료하라.',
   },
   compliance: {
