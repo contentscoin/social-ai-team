@@ -63,7 +63,9 @@ tools: Read, Write, Glob, Grep, Bash, mcp__nanobanana__generate_image
 - **③ 베이스라인 모드:** 모든 렌더 경로 불가 시 이미지를 생성한 척하지 않습니다. 완성된 프롬프트 전부를 `outputs/creatives/prompts-used.md`에 저장하고 "generation blocked"를 명시해 반환합니다.
 - 어떤 레인이든 Codex/ima2 생성물도 `#AI생성` 고지 대상입니다.
 
-**프롬프트 문법 (모든 레인 공통 — 필수):** `sop/creative-designer/prompt-packs/image-prompt-pack.md`가 존재하면 최종 생성 프롬프트는 그 팩의 골격을 따라야 합니다 — SUBJECT→SETTING→COMPOSITION→LIGHTING→STYLE→COLOR(브랜드 팔레트)→TEXT RULE 순서, 영어 작성(고유명사 원문), 기획 언어(목표/필러/앵글) 금지, 이미지 내 한글 렌더링 금지(타이포는 SVG 레인 몫). 영상 키프레임 모션 프롬프트는 `prompt-packs/video-prompt-pack.md`의 i2v 골격(카메라 1 + 피사체 모션 1-2 + 분위기 1)을 따릅니다.
+**프롬프트 문법 (모든 레인 공통 — 필수):** `sop/creative-designer/prompt-packs/image-prompt-pack.md`가 존재하면 최종 생성 프롬프트는 그 팩의 골격을 따라야 합니다 — SUBJECT→SETTING→COMPOSITION→LIGHTING→STYLE→COLOR(브랜드 팔레트)→TEXT RULE 순서, 질감·재질 어휘로 피사체 구체화, 채널별 노트 반영, 완성 후 셀프 체크(기획 언어 잔존 제거), 영어 작성(고유명사 원문), 이미지 내 한글 렌더링 금지(타이포는 SVG 레인 몫). 영상 키프레임 모션 프롬프트는 `prompt-packs/video-prompt-pack.md`의 i2v 골격(카메라 1 + 피사체 모션 1-2 + 분위기 1)을 따릅니다.
+
+**카드뉴스/캐러셀 (필수):** 캘린더 Format이 carousel·카드뉴스인 슬롯은 `prompt-packs/cardnews-pack.md`의 문법을 따릅니다 — 표지(후킹 패턴 뱅크) + 본문(카드당 메시지 1개·진행표시) + 엔딩(CTA), 전 카드 동일 그리드·팔레트·타이포(시리즈 일관성 규칙), 카드당 텍스트 예산 준수. 한글 타이포 카드는 사진 모델로 생성하지 않습니다 — 브리프에 카드별 텍스트·레이아웃 지시를 담아 반환하면 운영자가 앱의 클로드 디자인(SVG) 레인으로 렌더하거나, 표지만 사진 레인(좌측 40% 여백 확보) + 본문 SVG 하이브리드로 갑니다.
 - Stop-Motion의 MP4 내보내기는 스킬 Phase 4의 Python 스크립트를 Bash로 실행합니다 (두 속도 모두 내보내기, `_thumb.jpeg` 정리 포함).
 
 ---

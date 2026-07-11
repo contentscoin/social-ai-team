@@ -1098,6 +1098,7 @@ async function openRenderPanel(p) {
     <div class="rp-head"><b>비주얼 생성 — ${cardId(p)}</b>
       <div class="seg mini" id="rp-kind">
         <button data-k="image" class="${kind0 === 'image' ? 'active' : ''}">이미지</button>
+        <button data-k="cardnews">카드뉴스</button>
         <button data-k="video" class="${kind0 === 'video' ? 'active' : ''}">영상</button>
       </div></div>
     <select id="rp-provider" class="rp-input">${opts(kind0)}</select>
@@ -1107,6 +1108,9 @@ async function openRenderPanel(p) {
         <option value="portrait">세로 4:5 (피드)</option>
         <option value="story">세로 9:16 (릴스/스토리)</option>
         <option value="landscape">가로 16:9</option>
+      </select>
+      <select id="rp-cards" class="rp-input hidden" style="width:90px" title="카드 수 (표지+본문+엔딩)">
+        <option value="5">5장</option><option value="6">6장</option><option value="7">7장</option><option value="8">8장</option>
       </select>
       <select id="rp-dur" class="rp-input hidden" style="width:90px">
         <option value="5">5초</option><option value="8">8초</option><option value="10">10초</option><option value="15">15초</option><option value="30">30초</option>
@@ -1123,10 +1127,19 @@ async function openRenderPanel(p) {
     <button id="rp-go" class="accent" style="width:100%">▶ 생성</button>
     <p class="muted small" style="margin-top:4px">컴파일러는 브랜드 팔레트·카피의 VISUAL DIRECTION·프롬프트 팩을 재료로 씁니다. 결과는 수정 가능합니다.</p>`;
   const syncKind = (kind) => {
-    $('#rp-provider').innerHTML = opts(kind);
-    // 기본 선택 = availability 순서상 첫 번째 사용 가능 프로바이더 (이미지는 Codex 계열이 최우선)
-    const firstOk = Object.entries(av[kind]).find(([, v]) => v.ok);
-    if (firstOk) $('#rp-provider').value = firstOk[0];
+    if (kind === 'cardnews') {
+      // 카드뉴스는 한글 타이포가 핵심 — claude-svg 레인 전용 (사진 모델은 한글이 깨진다)
+      $('#rp-provider').innerHTML = `<option value="claude-svg">${esc(av.image['claude-svg'].label)}</option>`;
+      $('#rp-provider').value = 'claude-svg';
+      $('#rp-size').value = 'portrait';
+      $('#rp-prompt').placeholder = '카드뉴스 주제와 담을 내용 (표지 훅·본문 요점들·CTA를 적으면 카드로 배분됩니다)';
+    } else {
+      $('#rp-provider').innerHTML = opts(kind);
+      // 기본 선택 = availability 순서상 첫 번째 사용 가능 프로바이더 (이미지는 Codex 계열이 최우선)
+      const firstOk = Object.entries(av[kind]).find(([, v]) => v.ok);
+      if (firstOk) $('#rp-provider').value = firstOk[0];
+    }
+    $('#rp-cards').classList.toggle('hidden', kind !== 'cardnews');
     $('#rp-dur').classList.toggle('hidden', kind !== 'video');
     if (kind === 'video' && p.isReel) $('#rp-size').value = 'story';
   };
@@ -1177,14 +1190,16 @@ async function openRenderPanel(p) {
     const dir = S.client.dir;
     try {
       const r = await window.api.render.generate(dir, {
-        kind, provider, prompt,
+        kind: kind === 'cardnews' ? 'image' : kind,
+        provider, prompt,
+        cards: kind === 'cardnews' ? Number($('#rp-cards').value) || 5 : 1,
         negative: $('#rp-negative').value.trim() || null,
         base: `${p.chId || 'etc'}-${p.n}`,
         size: $('#rp-size').value,
         duration: Number($('#rp-dur').value) || 5,
         refRel: kind === 'video' ? (p.thumb || null) : null,
       });
-      if (r && r.ok) toast(`생성 완료 — ${r.rel.split(/[\\/]/).pop()}`);
+      if (r && r.ok) toast(r.files && r.files.length > 1 ? `카드뉴스 ${r.files.length}장 생성 완료` : `생성 완료 — ${r.rel.split(/[\\/]/).pop()}`);
       else toast('생성 실패: ' + ((r && r.error) || '알 수 없음'));
     } catch (e) { toast('생성 실패: ' + e.message); }
     finally {

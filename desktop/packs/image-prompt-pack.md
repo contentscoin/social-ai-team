@@ -50,6 +50,24 @@ low quality, oversaturated, plastic skin, AI artifacts, duplicated objects
 - 인포그래픽·스탯·인용 카드: 사진 레인 금지 → claude-svg 레인 사용
 - food: top-down flat lay 또는 45도 / appetizing 강조 / vibrant food photography
 
+## 질감·디테일 어휘 (SUBJECT를 살리는 것은 재질이다)
+- 표면: matte ceramic, brushed steel, soft linen weave, weathered wood grain, frosted glass
+- 음식: glistening moisture, delicate steam wisps, crisp golden edges, velvety texture
+- 피부/손: natural skin texture, soft focus hands, warm undertones (플라스틱 피부 방지)
+- 미세 요소: subtle condensation, fine dust motes in light, gentle fabric wrinkles
+
+## 채널별 노트
+- 인스타 피드(1:1·4:5): 스크롤 정지력 — 강한 단일 피사체, 높은 대비 1포인트
+- 스토리/릴스 키프레임(9:16): 세로 중앙 60%에 피사체, 상단 20% 캡션 안전지대 비우기
+- 네이버 블로그 삽입컷: 밝고 정보적, 과한 무드보다 실물 재현 우선 (신뢰가 목적)
+- 카드뉴스 표지(사진형): 좌측 40% 이상 negative space — 제목이 올라갈 자리
+
+## 셀프 체크 (프롬프트 완성 후 반드시)
+1. 기획 언어("브랜드 인지", "목표", "필러", "engagement")가 한 단어라도 남아 있으면 제거
+2. 카메라가 찍을 수 없는 추상 개념("따뜻한 브랜드 가치")이 있으면 구체 사물로 치환
+3. TEXT RULE 포함 여부 확인 — 빠졌으면 실패
+4. 문장이 아니라 명사구 나열이어도 좋다 — 밀도가 우선
+
 ## 나쁜 예 → 좋은 예
 나쁨: "홈카페 라떼 아트. 앵글: 브랜드 인지 제고. 필러: 시즌 콘텐츠"
 좋음: "A ceramic cup of latte with intricate rosetta latte art, on a warm wooden café table

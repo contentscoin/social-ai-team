@@ -10,7 +10,7 @@ const { spawnSync } = require('child_process');
 const { runCmd, isWin } = require('./proc');
 const secrets = require('./secrets');
 const config = require('./config');
-const { svgToPng, extractSvg } = require('./svg2png');
+const { svgToPng, extractSvg, extractSvgAll } = require('./svg2png');
 
 const SIZES = { square: [1080, 1080], portrait: [1080, 1350], story: [1080, 1920], landscape: [1200, 675] };
 
@@ -61,28 +61,40 @@ async function genClaudeSvg(dir, job, onLine) {
   const model = config.getModels().claude;
   const args = ['-p', '--add-dir', dir];
   if (model) args.push('--model', model);
-  // 디자인 팩(레이아웃 아키타입·한글 타이포 규칙) 주입 — 매번 다른 즉흥 디자인이 아니라 검증된 틀 위에서
+  const cards = Math.min(10, Math.max(1, Number(job.cards) || 1));
+  // 디자인 팩(레이아웃 아키타입·한글 타이포 규칙 + 카드뉴스 문법) 주입
   let designPack = '';
-  try { designPack = require('./promptlab').packContext('svg', 6000); } catch { /* 팩 없이도 동작 */ }
+  try { designPack = require('./promptlab').packContext('svg', cards > 1 ? 9000 : 6000); } catch { /* 팩 없이도 동작 */ }
+  const cardRule = cards > 1
+    ? `- 이것은 ${cards}장짜리 카드뉴스다. 디자인 팩의 카드뉴스 문법을 따르라: 표지 1장(후킹) + 본문 ${cards - 2}장(카드당 메시지 1개·진행표시 01/${String(cards).padStart(2, '0')} 형식) + 엔딩 1장(요약+CTA).\n` +
+      `- 전 카드 동일 그리드·팔레트·타이포 스케일 (시리즈 일관성 규칙 준수)\n` +
+      `- 정확히 ${cards}개의 <svg> 블록을 순서대로 출력하고, 각 블록 사이에 <!--CARD--> 주석 한 줄을 넣어라\n`
+    : `- 디자인 팩의 아키타입 중 포스트 성격에 맞는 것 하나를 고르고, 한글 타이포·색·여백 규칙을 그대로 지켜라\n`;
   const prompt =
-    `${dir}/context/brand-style.md 를 읽고(없으면 모던·미니멀 기본), 아래 소셜 포스트의 피드 이미지를 SVG로 디자인하라.\n` +
+    `${dir}/context/brand-style.md 를 읽고(없으면 모던·미니멀 기본), 아래 소셜 포스트의 ${cards > 1 ? `카드뉴스 ${cards}장` : '피드 이미지'}를 SVG로 디자인하라.\n` +
     `규칙:\n- 캔버스 정확히 ${w}x${h} (viewBox="0 0 ${w} ${h}", width/height 명시)\n` +
-    `- 아래 디자인 팩의 아키타입 중 포스트 성격에 맞는 것 하나를 고르고, 한글 타이포·색·여백 규칙을 그대로 지켜라\n` +
+    cardRule +
     `- 브랜드 팔레트와 무드 반영, 사진 대신 도형·그라디언트·패턴 일러스트 구성\n` +
     `- 한글 텍스트 font-family="Pretendard, 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif"\n` +
     `- 외부 이미지/폰트/스크립트 참조 절대 금지 (완전 self-contained)\n` +
-    `- 출력은 SVG 코드만. 설명·코드펜스 금지. 반드시 <svg 로 시작해 </svg>로 끝낼 것.\n\n` +
+    `- 출력은 SVG 코드만. 설명·코드펜스 금지.\n\n` +
     `[포스트]\n${job.prompt}` +
     (designPack ? `\n\n[디자인 팩]\n${designPack}` : '');
-  onLine && onLine('[render] 클로드 디자인 — SVG 설계 중…');
-  const r = await runCmd('claude', args, null, { cwd: dir, stdinText: prompt, timeoutMs: 5 * 60_000 });
-  const svg = extractSvg(r.out);
-  if (!svg) return err('claude-svg', 'SVG를 받지 못했습니다: ' + (r.tail || '').slice(-200));
-  const { abs, rel } = outName(dir, 'creatives', job.base, 'png');
-  onLine && onLine('[render] SVG → PNG 변환 중…');
-  await svgToPng(svg, w, h, abs);
-  try { fs.writeFileSync(abs.replace(/\.png$/, '.svg'), svg); } catch { /* 소스 보존 실패는 무시 */ }
-  return { ok: true, provider: 'claude-svg', rel, files: [rel] };
+  onLine && onLine(`[render] 클로드 디자인 — ${cards > 1 ? `카드뉴스 ${cards}장` : 'SVG'} 설계 중…`);
+  const r = await runCmd('claude', args, null, { cwd: dir, stdinText: prompt, timeoutMs: (cards > 1 ? 12 : 5) * 60_000 });
+  const svgs = extractSvgAll(r.out);
+  if (!svgs.length) return err('claude-svg', 'SVG를 받지 못했습니다: ' + (r.tail || '').slice(-200));
+  if (cards > 1 && svgs.length < cards) onLine && onLine(`[render] 요청 ${cards}장 중 ${svgs.length}장만 수신 — 받은 만큼 렌더합니다`);
+  const files = [];
+  for (let i = 0; i < Math.min(svgs.length, cards); i++) {
+    const suffix = cards > 1 ? `${job.base}_c${i + 1}` : job.base;
+    const { abs, rel } = outName(dir, 'creatives', suffix, 'png');
+    onLine && onLine(`[render] SVG → PNG 변환 중… (${i + 1}/${Math.min(svgs.length, cards)})`);
+    await svgToPng(svgs[i], w, h, abs);
+    try { fs.writeFileSync(abs.replace(/\.png$/, '.svg'), svgs[i]); } catch { /* 소스 보존 실패는 무시 */ }
+    files.push(rel);
+  }
+  return { ok: true, provider: 'claude-svg', rel: files[0], files };
 }
 
 // (2) OpenAI 이미지 (gpt-image-1) — "코덱스 이미지" 직결 레인. OPENAI_API_KEY 필요.

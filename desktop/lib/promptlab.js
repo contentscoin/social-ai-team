@@ -43,7 +43,7 @@ function savePack(name, content) {
 }
 // kind에 맞는 팩 본문을 합쳐 컴파일 컨텍스트로 (예산 내 절단)
 function packContext(kind, budget = 9000) {
-  const want = kind === 'video' ? /video|영상|모션|motion/i : (kind === 'svg' ? /svg|디자인|design|typo/i : /image|이미지|photo|프롬프트|prompt/i);
+  const want = kind === 'video' ? /video|영상|모션|motion/i : (kind === 'svg' ? /svg|디자인|design|typo|cardnews|카드뉴스/i : /image|이미지|photo|프롬프트|prompt/i);
   const all = listPacks();
   const picked = all.filter((p) => want.test(p.name) || want.test(p.file));
   // 매칭이 없으면 이름과 무관하게 전부 (사용자가 팩 이름을 자유롭게 지었을 수 있다)
@@ -114,7 +114,10 @@ async function claudeCompile(dir, job, brand, vd, onLine) {
     `너는 시니어 비주얼 프롬프트 엔지니어다. 아래 재료로 ${target}에 넣을 최종 생성 프롬프트를 만들어라.\n\n` +
     `[규칙]\n- 아래 프롬프트 팩의 골격과 뱅크를 따르라. 기획 언어(목표/필러/앵글)를 그대로 옮기지 말고 시각 언어로 번역하라.\n` +
     `- 프롬프트는 영어로 (브랜드/제품 고유명사는 원문 유지). 이미지면 텍스트 금지 규칙을 반드시 포함.\n` +
+    `- 대상 사이즈 ${job.size || 'square'} — 팩의 채널별 노트를 반영하라 (세로형은 캡션 안전지대, 카드뉴스 표지는 좌측 여백 등).\n` +
+    `- 질감·재질 어휘로 피사체를 구체화하라 (팩의 질감 뱅크 참조).\n` +
     `- 영상이면 카메라 1개 + 피사체 모션 1-2개 + 분위기 1개, 3문장 이내.\n` +
+    `- 완성 후 팩의 셀프 체크를 수행하라: 기획 언어 잔존 제거, 추상 개념→구체 사물 치환, TEXT RULE 확인.\n` +
     `- 출력은 JSON 하나만: {"prompt":"...","negative":"..."} (negative는 이미지에만, 없으면 빈 문자열)\n\n` +
     `[포스트 재료]\n주제: ${job.topic || '-'}\n채널/포맷: ${job.channel || '-'} / ${job.format || '-'}\n운영자 브리프: ${job.prompt || '-'}\n` +
     (vd ? `카피라이터의 VISUAL DIRECTION (가장 중요한 재료): ${vd}\n` : '') +

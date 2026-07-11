@@ -28,13 +28,17 @@ async function svgToPng(svg, width, height, outPath) {
 }
 
 // 응답 텍스트에서 SVG 블록 추출 — 코드펜스/설명이 섞여 와도 견딘다
+function sanitizeSvg(svg) {
+  // 원격 참조 제거 — 렌더 창 CSP가 어차피 막지만 파일에도 남기지 않는다
+  return svg.replace(/(href|src)\s*=\s*"(?!#|data:)[^"]*"/gi, '');
+}
 function extractSvg(text) {
   const m = String(text || '').match(/<svg[\s\S]*?<\/svg>/i);
-  if (!m) return null;
-  let svg = m[0];
-  // 원격 참조 제거 — 렌더 창 CSP가 어차피 막지만 파일에도 남기지 않는다
-  svg = svg.replace(/(href|src)\s*=\s*"(?!#|data:)[^"]*"/gi, '');
-  return svg;
+  return m ? sanitizeSvg(m[0]) : null;
+}
+// 카드뉴스 등 멀티카드 — 모든 SVG 블록을 순서대로
+function extractSvgAll(text) {
+  return [...String(text || '').matchAll(/<svg[\s\S]*?<\/svg>/gi)].map((m) => sanitizeSvg(m[0]));
 }
 
-module.exports = { svgToPng, extractSvg };
+module.exports = { svgToPng, extractSvg, extractSvgAll };
