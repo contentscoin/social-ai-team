@@ -117,15 +117,49 @@ async function testFacebook() {
 
 // ---- Threads --------------------------------------------------------------------------
 // 이미지는 공개 URL이 필수(바이너리 업로드 미지원) — 텍스트만 직접 발행, 이미지 포스트는 수동 안내.
-async function publishThreads({ text }) {
+// 스토리라인은 댓글형 체인(첫 글 → reply_to_id로 이어붙임)이 흔하다 — segments로 지원.
+const TH_BASE = 'https://graph.threads.net/v1.0';
+async function threadsPost(c, text, replyToId) {
+  // 컨테이너 생성 → (미디어면 status 대기) → 발행. reply_to_id면 앞 글에 이어붙는 답글.
+  const q = new URLSearchParams({ media_type: 'TEXT', text, access_token: c.token });
+  if (replyToId) q.set('reply_to_id', replyToId);
+  const mk = await http(`${TH_BASE}/${c.userId}/threads?${q.toString()}`, { method: 'POST' });
+  if (!mk.ok || !mk.json || !mk.json.id) throw new Error((mk.json && mk.json.error && mk.json.error.message) || `HTTP ${mk.status}`);
+  const pub = await http(`${TH_BASE}/${c.userId}/threads_publish?creation_id=${mk.json.id}&access_token=${encodeURIComponent(c.token)}`, { method: 'POST' });
+  if (!pub.ok || !pub.json || !pub.json.id) throw new Error((pub.json && pub.json.error && pub.json.error.message) || `HTTP ${pub.status}`);
+  return pub.json.id;
+}
+// 본문을 체인 세그먼트로 분리 — 명시 segments 우선.
+// threads-writer 스킬의 "Post 1/[n]:" / "1/3" 마커, "---", 빈 줄 2개를 경계로 인식하고
+// 각 조각 앞머리의 번호 마커는 제거한다 (실제 게시 본문에는 "Post 1/3" 표기가 없어야).
+const TH_MARKER = /^\s*(?:post\s*)?\d+\s*\/\s*\[?\d*\]?\s*[:.)]?\s*/i;
+function splitThreadSegments(text, segments) {
+  const clean = (s) => String(s).replace(TH_MARKER, '').trim();
+  if (Array.isArray(segments) && segments.length) return segments.map(clean).filter(Boolean);
+  const parts = String(text).split(/\n\s*(?:---+|===+)\s*\n|\n(?=\s*(?:post\s*)?\d+\s*\/\s*\[?\d)|\n{2,}/i);
+  const out = parts.map(clean).filter(Boolean);
+  return out.length ? out : [clean(text)];
+}
+async function publishThreads({ text, segments }) {
   const c = secrets.get('threads');
   if (!c.userId || !c.token) return fail('threads', 'Threads 사용자 ID와 토큰이 필요합니다 — 설정 → 채널');
+  const parts = splitThreadSegments(text, segments).filter((p) => p.length);
+  if (!parts.length) return fail('threads', '발행할 본문이 없습니다');
   try {
-    const mk = await http(`https://graph.threads.net/v1.0/${c.userId}/threads?media_type=TEXT&text=${encodeURIComponent(text)}&access_token=${encodeURIComponent(c.token)}`, { method: 'POST' });
-    if (!mk.ok || !mk.json || !mk.json.id) return fail('threads', (mk.json && mk.json.error && mk.json.error.message) || `HTTP ${mk.status}`);
-    const pub = await http(`https://graph.threads.net/v1.0/${c.userId}/threads_publish?creation_id=${mk.json.id}&access_token=${encodeURIComponent(c.token)}`, { method: 'POST' });
-    if (!pub.ok) return fail('threads', (pub.json && pub.json.error && pub.json.error.message) || `HTTP ${pub.status}`);
-    return { ok: true, channel: 'threads', id: pub.json && pub.json.id };
+    // 500자 초과 세그먼트는 안내 (Threads 제한) — 자르지 않고 실패시켜 운영자가 손보게
+    const tooLong = parts.findIndex((p) => p.length > 500);
+    if (tooLong >= 0) return fail('threads', `${tooLong + 1}번째 세그먼트가 500자를 초과합니다 (${parts[tooLong].length}자) — 나눠주세요`);
+    let firstId = null, prevId = null, published = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const id = await threadsPost(c, parts[i], i === 0 ? null : prevId);
+      if (i === 0) firstId = id;
+      prevId = id; published++;
+      if (i < parts.length - 1) await new Promise((r) => setTimeout(r, 1200)); // 컨테이너 처리 여유
+    }
+    return {
+      ok: true, channel: 'threads', id: firstId, chain: published,
+      url: firstId ? `https://www.threads.net/t/${firstId}` : null,
+    };
   } catch (e) { return fail('threads', e.message); }
 }
 async function testThreads() {
@@ -197,23 +231,24 @@ function status() {
   return {
     x: { connected: secrets.has('x', ['apiKey', 'apiSecret', 'accessToken', 'accessSecret']), image: true },
     facebook: { connected: secrets.has('facebook', ['pageId', 'pageToken']), image: true },
-    threads: { connected: secrets.has('threads', ['userId', 'token']), image: false, imageNote: 'Threads API는 공개 이미지 URL만 받아 이미지 포스트는 수동 발행' },
+    threads: { connected: secrets.has('threads', ['userId', 'token']), image: false, chain: true, imageNote: 'Threads API는 공개 이미지 URL만 받아 이미지 포스트는 수동 발행. 텍스트는 댓글형 체인(스토리라인) 발행 지원' },
     linkedin: { connected: secrets.has('linkedin', ['personId', 'token']), image: true },
     instagram: { connected: false, manualOnly: true, note: 'Instagram API는 공개 이미지 URL + 비즈니스 계정 필수 — 수동 발행 체크리스트 사용' },
     naver: { connected: false, manualOnly: true, note: '네이버 블로그는 공개 API 미제공 — 수동 발행 체크리스트 사용' },
   };
 }
 
-async function publishNow(dir, { uid, channel, text, imageRel }) {
+async function publishNow(dir, { uid, channel, text, imageRel, segments }) {
   const fn = PUBLISHERS[channel];
   if (!fn) return fail(channel, '이 채널은 직접 발행을 지원하지 않습니다 — 수동 체크리스트를 사용하세요');
-  if (!text || !text.trim()) return fail(channel, '발행할 본문이 비어 있습니다');
+  const hasSegs = Array.isArray(segments) && segments.length > 1;
+  if ((!text || !text.trim()) && !hasSegs) return fail(channel, '발행할 본문이 비어 있습니다');
   let imageAbs = null;
   if (imageRel) {
     const abs = path.resolve(dir, imageRel);
     if (abs.startsWith(path.resolve(dir) + path.sep) && fs.existsSync(abs)) imageAbs = abs;
   }
-  const r = await fn({ text: text.trim(), imageAbs });
+  const r = await fn({ text: (text || '').trim(), imageAbs, segments });
   if (r.ok && uid) {
     try {
       const log = publishlog.mark(dir, uid, true);
@@ -242,13 +277,13 @@ function saveQueue(dir, q) {
   fs.writeFileSync(tmp, JSON.stringify(q, null, 2));
   fs.renameSync(tmp, queueFile(dir));
 }
-function schedule(dir, { uid, channel, text, imageRel, when }) {
+function schedule(dir, { uid, channel, text, imageRel, segments, when }) {
   const at = new Date(when);
   if (!(at instanceof Date) || isNaN(at)) return { ok: false, error: '예약 시각이 올바르지 않습니다' };
   if (at.getTime() < Date.now() - 60_000) return { ok: false, error: '과거 시각으로는 예약할 수 없습니다' };
   const q = loadQueue(dir);
   const qid = 'q' + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
-  q.items.push({ qid, uid, channel, text, imageRel: imageRel || null, when: at.toISOString(), status: 'pending', createdAt: new Date().toISOString() });
+  q.items.push({ qid, uid, channel, text, imageRel: imageRel || null, segments: Array.isArray(segments) ? segments : null, when: at.toISOString(), status: 'pending', createdAt: new Date().toISOString() });
   saveQueue(dir, q);
   return { ok: true, qid, when: at.toISOString() };
 }

@@ -430,7 +430,16 @@ function makeCard(p) {
   $('.pc-id', el).textContent = cardId(p);
   $('.pc-when', el).textContent = `${p.week || '?'}주 ${p.day || ''}`;
   $('.pc-topic', el).textContent = p.topic || '(제목 없음)';
-  if (p.thumb) { // 렌더된 실제 이미지 — 프롬프트 md가 아니라 결과물이 보드에 보인다
+  // 렌더된 실제 이미지 — 여러 장이면 썸네일 스트립, 한 장이면 단일 (프롬프트 md가 아니라 결과물)
+  const renders = (p.files || []).filter((f) => f.kind === 'render').map((f) => f.rel);
+  if (renders.length > 1) {
+    const im = $('.pc-thumb', el);
+    const strip = document.createElement('div');
+    strip.className = 'pc-thumbs';
+    strip.innerHTML = renders.slice(0, 4).map((r) => `<img src="${satUrl(r)}" class="zoomable" alt="">`).join('')
+      + (renders.length > 4 ? `<span class="more">+${renders.length - 4}</span>` : '');
+    im.replaceWith(strip);
+  } else if (p.thumb) {
     const im = $('.pc-thumb', el);
     im.src = satUrl(p.thumb);
     im.classList.remove('hidden');
@@ -1235,7 +1244,11 @@ function openInspector(p) {
       <div class="insp-step ${i <= stageIdx ? 'done' : ''}"><b style="min-width:70px">${STAGE_LABEL[s]}</b>
       <span>${(stepFiles[s] || []).map((f) => `<a href="#" class="insp-file" data-rel="${esc(f.rel)}" style="color:var(--info)">${esc(f.name)}</a>`).join('<br>') || '<span class="muted">—</span>'}</span></div>`).join('')}
     </div>
-    ${p.thumb ? `<img class="insp-render zoomable" src="${satUrl(p.thumb)}" alt="렌더 이미지">` : ''}
+    ${(() => {
+      const imgs = (p.files || []).filter((f) => f.kind === 'render').map((f) => f.rel);
+      if (!imgs.length && p.thumb) imgs.push(p.thumb);
+      return imgs.length ? `<div class="insp-strip">${imgs.map((r) => `<img class="zoomable" src="${satUrl(r)}" alt="렌더">`).join('')}</div>` : '';
+    })()}
     ${p.videoThumb ? `<video class="insp-render" src="${satUrl(p.videoThumb)}" controls preload="metadata"></video>` : ''}
     <div id="insp-preview"></div>
     ${p.verdict && p.verdict !== 'PASS' ? `<div class="insp-verdict ${p.verdict}"><b>${p.verdict}</b> — 컴플라이언스 판정. 상세 사유는 검수 파일에서 확인하세요.</div>` : ''}
@@ -1285,6 +1298,9 @@ async function openRenderPanel(p) {
         <option value="story">세로 9:16 (릴스/스토리)</option>
         <option value="landscape">가로 16:9</option>
       </select>
+      <select id="rp-imgcount" class="rp-input" style="width:96px" title="생성할 이미지 장수 (캐러셀)">
+        <option value="1">1장</option><option value="2">2장</option><option value="3">3장</option><option value="4">4장</option><option value="5">5장</option>
+      </select>
       <select id="rp-cards" class="rp-input hidden" style="width:90px" title="카드 수 (표지+본문+엔딩)">
         <option value="5">5장</option><option value="6">6장</option><option value="7">7장</option><option value="8">8장</option>
       </select>
@@ -1316,6 +1332,7 @@ async function openRenderPanel(p) {
       if (firstOk) $('#rp-provider').value = firstOk[0];
     }
     $('#rp-cards').classList.toggle('hidden', kind !== 'cardnews');
+    $('#rp-imgcount').classList.toggle('hidden', kind !== 'image'); // 캐러셀 장수는 이미지 탭만
     $('#rp-dur').classList.toggle('hidden', kind !== 'video');
     if (kind === 'video' && p.isReel) $('#rp-size').value = 'story';
   };
@@ -1369,13 +1386,14 @@ async function openRenderPanel(p) {
         kind: kind === 'cardnews' ? 'image' : kind,
         provider, prompt,
         cards: kind === 'cardnews' ? Number($('#rp-cards').value) || 5 : 1,
+        count: kind === 'image' ? Number($('#rp-imgcount').value) || 1 : 1,
         negative: $('#rp-negative').value.trim() || null,
         base: `${p.chId || 'etc'}-${p.n}`,
         size: $('#rp-size').value,
         duration: Number($('#rp-dur').value) || 5,
         refRel: kind === 'video' ? (p.thumb || null) : null,
       });
-      if (r && r.ok) toast(r.files && r.files.length > 1 ? `카드뉴스 ${r.files.length}장 생성 완료` : `생성 완료 — ${r.rel.split(/[\\/]/).pop()}`);
+      if (r && r.ok) toast(r.files && r.files.length > 1 ? `${r.files.length}장 생성 완료` : `생성 완료 — ${r.rel.split(/[\\/]/).pop()}`);
       else toast('생성 실패: ' + ((r && r.error) || '알 수 없음'));
     } catch (e) { toast('생성 실패: ' + e.message); }
     finally {
@@ -1459,11 +1477,14 @@ async function openCompose(chKey, p, direct) {
   const limits = { x: 280, threads: 500 };
   const limit = limits[chKey];
   const canImage = !!direct.image && !!p.thumb;
+  const canChain = !!direct.chain; // Threads 등 댓글형 체인 지원 채널
   box.innerHTML = `
     <div class="rp-head" style="margin-top:10px"><b>발행 — ${cardId(p)}</b><button class="icon-btn" id="cmp-close"><svg><use href="#i-close"/></svg></button></div>
+    ${canChain ? `<label class="small muted" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <input type="checkbox" id="cmp-chain"> 댓글형 체인 (스토리라인) — "---" 또는 빈 줄로 나눈 각 조각이 이어지는 답글로 발행됩니다</label>` : ''}
     <textarea id="cmp-text" class="rp-input" rows="7">${esc(draft.ok ? draft.text : '')}</textarea>
     <div class="small muted" style="display:flex;justify-content:space-between">
-      <span id="cmp-count"></span>${limit ? `<span>제한 ${limit}자</span>` : ''}
+      <span id="cmp-count"></span>${limit ? `<span>제한 ${limit}자${canChain ? ' (조각당)' : ''}</span>` : ''}
     </div>
     ${!draft.ok ? `<p class="muted small" style="color:var(--warn)">초안을 찾지 못했습니다 (${esc(draft.error || '')}) — 직접 입력하세요</p>` : ''}
     ${direct.image ? `<label class="small muted" style="display:flex;gap:6px;align-items:center;margin:4px 0">
@@ -1475,23 +1496,40 @@ async function openCompose(chKey, p, direct) {
       <button id="cmp-later">예약</button>
     </div>`;
   const ta = $('#cmp-text');
+  const chained = () => canChain && $('#cmp-chain') && $('#cmp-chain').checked;
+  // 스킬의 "Post 1/[n]:"·"1/3" 마커, "---", 빈 줄 2개를 경계로 — 마커는 제거 (실제 게시엔 번호 표기 없음)
+  const TH_M = /^\s*(?:post\s*)?\d+\s*\/\s*\[?\d*\]?\s*[:.)]?\s*/i;
+  const splitChain = (t) => t.split(/\n\s*(?:---+|===+)\s*\n|\n(?=\s*(?:post\s*)?\d+\s*\/\s*\[?\d)|\n{2,}/i)
+    .map((s) => s.replace(TH_M, '').trim()).filter(Boolean);
   const updCount = () => {
-    const n = ta.value.length;
     const el = $('#cmp-count');
-    if (el) { el.textContent = `${n}자`; el.style.color = limit && n > limit ? 'var(--bad)' : ''; }
+    if (!el) return;
+    if (chained()) {
+      const segs = splitChain(ta.value);
+      const over = segs.filter((s) => limit && s.length > limit).length;
+      el.textContent = `${segs.length}개 조각${over ? ` · ${over}개 초과!` : ''}`;
+      el.style.color = over ? 'var(--bad)' : '';
+    } else {
+      const n = ta.value.length;
+      el.textContent = `${n}자`;
+      el.style.color = limit && n > limit ? 'var(--bad)' : '';
+    }
   };
-  ta.addEventListener('input', updCount); updCount();
+  ta.addEventListener('input', updCount);
+  box.addEventListener('change', (e) => { if (e.target.id === 'cmp-chain') updCount(); });
+  updCount();
   $('#cmp-close').onclick = () => { box.classList.add('hidden'); box.innerHTML = ''; };
-  const payload = () => ({
-    uid: p.uid, channel: chKey, text: ta.value,
-    imageRel: ($('#cmp-img') && $('#cmp-img').checked) ? p.thumb : null,
-  });
+  const payload = () => {
+    const base = { uid: p.uid, channel: chKey, text: ta.value, imageRel: ($('#cmp-img') && $('#cmp-img').checked) ? p.thumb : null };
+    if (chained()) base.segments = splitChain(ta.value);
+    return base;
+  };
   $('#cmp-now').onclick = async () => {
     if (!ta.value.trim()) { toast('본문이 비어 있습니다'); return; }
-    const b = $('#cmp-now'); b.disabled = true; b.textContent = '발행 중…';
+    const b = $('#cmp-now'); b.disabled = true; b.textContent = chained() ? '체인 발행 중…' : '발행 중…';
     try {
       const r = await window.api.pub2.publishNow(S.client.dir, payload());
-      if (r && r.ok) { toast(`${CH_NAME[chKey] || chKey} 발행 완료${r.url ? ' — ' + r.url : ''}`); box.classList.add('hidden'); refreshBoard(false); }
+      if (r && r.ok) { toast(`${CH_NAME[chKey] || chKey} 발행 완료${r.chain ? ` (${r.chain}개 체인)` : ''}${r.url ? ' — ' + r.url : ''}`); box.classList.add('hidden'); refreshBoard(false); }
       else toast('발행 실패: ' + ((r && r.error) || '알 수 없음'));
     } finally { b.disabled = false; b.textContent = '지금 발행'; }
   };
@@ -1734,6 +1772,54 @@ async function renderPackSection(root) {
     </div>
     <div id="oc-results" class="small" style="margin-top:8px"></div>`;
   root.appendChild(box);
+
+  // ── 전략 추출 & OpenCrab 인제스트 (현재 클라이언트 기준) ──
+  const sbox = document.createElement('div');
+  sbox.className = 'sec-form';
+  sbox.innerHTML = `<div class="sec-head"><b>전략 추출 & OpenCrab 인제스트</b><span class="muted small">채널별·주제별 재사용 전략</span></div>
+    <p class="muted small" style="margin:4px 0 8px">현재 클라이언트의 브랜드·캘린더·분석 자료에서 채널별·주제별 전략을 뽑아 <code>context/strategy/</code>에 저장하고, OpenCrab MCP 프로젝트로 올립니다.</p>
+    <div id="strat-list" class="small" style="margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="strat-extract">전략 추출</button>
+      <input id="strat-proj" class="rp-input" placeholder="OpenCrab 프로젝트명 (예: 온도-소셜전략)" style="flex:1">
+      <button id="strat-ingest">인제스트</button>
+    </div>
+    <p class="muted small" id="strat-msg" style="margin-top:6px"></p>`;
+  root.appendChild(sbox);
+  const refreshStrat = async () => {
+    if (!S.client) { $('#strat-list', sbox).innerHTML = '<span class="muted">클라이언트를 먼저 선택하세요</span>'; return; }
+    const items = await window.api.strat.list(S.client.dir);
+    const list = Array.isArray(items) ? items : [];
+    $('#strat-list', sbox).innerHTML = list.length
+      ? list.map((s) => `<span class="chip tiny" title="${esc(s.title)}">${s.kind === 'channel' ? '📡' : (s.kind === 'topic' ? '🎯' : '📄')} ${esc(s.title.slice(0, 24))}</span>`).join(' ')
+      : '<span class="muted">아직 전략 파일 없음 — [전략 추출]을 먼저</span>';
+    if (S.client) $('#strat-proj', sbox).value = $('#strat-proj', sbox).value || `${S.client.name}-소셜전략`;
+  };
+  refreshStrat();
+  $('#strat-extract', sbox).onclick = async () => {
+    if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+    const b = $('#strat-extract', sbox); b.disabled = true; b.textContent = '추출 중… (수 분)';
+    $('#strat-msg', sbox).textContent = '브랜드·캘린더·분석 자료에서 전략을 뽑는 중입니다';
+    try {
+      const r = await window.api.strat.extract(S.client.dir);
+      $('#strat-msg', sbox).textContent = r && r.ok ? `✔ ${r.count}개 (채널 ${r.channels} · 주제 ${r.topics})` : '✖ ' + ((r && r.error) || '실패');
+      refreshStrat();
+    } catch (e) { $('#strat-msg', sbox).textContent = '✖ ' + e.message; }
+    finally { b.disabled = false; b.textContent = '전략 추출'; }
+  };
+  $('#strat-ingest', sbox).onclick = async () => {
+    if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+    const proj = $('#strat-proj', sbox).value.trim();
+    if (!proj) { toast('프로젝트명을 입력하세요'); return; }
+    const b = $('#strat-ingest', sbox); b.disabled = true; b.textContent = '인제스트 중…';
+    try {
+      const r = await window.api.strat.ingest(S.client.dir, proj);
+      if (r && r.ok) $('#strat-msg', sbox).textContent = `✔ ${r.ingested}/${r.total} 인제스트 (도구 ${r.ingestTool || '?'})`;
+      else if (r && r.unsupported) $('#strat-msg', sbox).textContent = `⚠ ${r.note || '엔드포인트가 읽기 전용 — 전략은 로컬에 저장됨'}`;
+      else $('#strat-msg', sbox).textContent = '✖ ' + ((r && (r.note || r.error)) || '실패');
+    } catch (e) { $('#strat-msg', sbox).textContent = '✖ ' + e.message; }
+    finally { b.disabled = false; b.textContent = '인제스트'; }
+  };
   const refreshList = async () => {
     const packs = await window.api.packs.list();
     $('#pack-list', box).innerHTML = (Array.isArray(packs) ? packs : []).map((p) =>

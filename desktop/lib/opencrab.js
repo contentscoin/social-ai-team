@@ -66,6 +66,80 @@ async function search(query) {
   return { ok: true, total: payload.total || packs.length, packs };
 }
 
+// ---- 쓰기 경로: 프로젝트 생성 + 전략 인제스트 -----------------------------------------
+// 주의: 검증된 opencrab.sh 클라이언트는 전부 읽기 전용(opencrab_search_packs)이라, 쓰기 도구
+// 이름을 하드코딩하지 않는다. tools/list로 발견해 이름/스키마 패턴으로 매칭하고, 없으면
+// 정직하게 "이 엔드포인트는 읽기 전용 — 팩 업로드(CLI)로 인제스트" 안내로 폴백한다.
+async function listTools(ep) {
+  try { const tl = await rpc(ep, 3, 'tools/list', {}); return (tl && tl.tools) || []; }
+  catch { return []; }
+}
+function schemaProps(t) { return (t && t.inputSchema && t.inputSchema.properties) || {}; }
+function pickTool(tools, nameRe, opts = {}) {
+  const cands = tools.filter((t) => nameRe.test(String(t.name || '')));
+  // 본문 필드(text/content/document/source)가 있는 도구를 우선
+  if (opts.needsBody) {
+    const withBody = cands.find((t) => Object.keys(schemaProps(t)).some((k) => /text|content|document|body|source/i.test(k)));
+    if (withBody) return withBody;
+  }
+  return cands[0] || null;
+}
+async function callTool(ep, name, args, id = 5) {
+  const result = await rpc(ep, id, 'tools/call', { name, arguments: args });
+  if (result && result.isError) throw new Error(`${name} 도구 오류`);
+  const text = textOf(result);
+  try { return text ? JSON.parse(text) : (result || {}); } catch { return { raw: text }; }
+}
+
+// 프로젝트(팩) 생성 시도 — 발견된 create 도구가 있으면 호출, 없으면 null(폴백)
+async function createProject(name, meta) {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const createT = pickTool(tools, /(create|new)[_-]?(pack|project|kb|knowledge|base|space)/i);
+  if (!createT) return { ok: false, unsupported: true, tools: tools.map((t) => t.name), error: '이 엔드포인트에 프로젝트/팩 생성 도구가 없습니다 (읽기 전용일 수 있음)' };
+  const props = schemaProps(createT);
+  const args = {};
+  // 스키마의 title/name/category/description 필드에 맞춰 채운다
+  for (const [k] of Object.entries(props)) {
+    if (/title|name/i.test(k)) args[k] = name;
+    else if (/desc/i.test(k)) args[k] = meta && meta.description || `${name} — 소셜 콘텐츠 전략 지식팩`;
+    else if (/categor/i.test(k)) args[k] = meta && meta.category || 'social-strategy';
+    else if (/visib/i.test(k)) args[k] = 'private';
+  }
+  if (!Object.keys(args).length) args.title = name;
+  const res = await callTool(ep, createT.name, args, 6);
+  const id = res.package_id || res.project_id || res.id || res.pack_id || res.space || null;
+  return { ok: true, tool: createT.name, id, raw: res };
+}
+
+// 전략 문서 인제스트 — 발견된 ingest/add 도구로 문서를 하나씩 올린다
+async function ingest(items, projectId) {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const ingestT = pickTool(tools, /(ingest|add|upsert|import|upload)[_-]?(doc|document|content|text|node|pack)?/i, { needsBody: true });
+  if (!ingestT) {
+    return { ok: false, unsupported: true, tools: tools.map((t) => t.name), ingested: 0,
+      error: '이 엔드포인트에 인제스트(쓰기) 도구가 없습니다 — opencrab.sh는 읽기 전용일 수 있습니다. 이 경우 전략 파일은 로컬(context/strategy/)에 남고, OpenCrab CLI의 팩 업로드로 올려야 합니다.' };
+  }
+  const props = schemaProps(ingestT);
+  const bodyKey = Object.keys(props).find((k) => /text|content|document|body/i.test(k)) || 'text';
+  const srcKey = Object.keys(props).find((k) => /source|id|title|name/i.test(k));
+  const projKey = Object.keys(props).find((k) => /pack|project|space|tenant|kb/i.test(k));
+  let ok = 0; const fails = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const args = { [bodyKey]: String(it.text || '').slice(0, 200 * 1024) };
+    if (srcKey) args[srcKey] = it.source || it.title || `doc-${i + 1}`;
+    if (projKey && projectId) args[projKey] = projectId;
+    if (props.metadata) args.metadata = { title: it.title, kind: it.kind, channel: it.channel, topic: it.topic };
+    try { await callTool(ep, ingestT.name, args, 10 + i); ok++; }
+    catch (e) { fails.push(`${it.title || i}: ${e.message}`); }
+  }
+  return { ok: ok > 0, tool: ingestT.name, ingested: ok, total: items.length, fails };
+}
+
 // 팩 내용 로드 — 서버의 콘텐츠 도구를 탐색해 시도, 없으면 메타데이터를 참조 노트로 저장
 const CONTENT_TOOL_CANDIDATES = /get_pack|pack_content|export_pack|pack_docs|fetch_pack|load_pack|pack_detail/i;
 async function load(pack) {
@@ -98,4 +172,4 @@ async function load(pack) {
   return { ok: true, file: saved.file, via };
 }
 
-module.exports = { search, load };
+module.exports = { search, load, createProject, ingest };

@@ -281,6 +281,11 @@ button:disabled { opacity:.4; cursor:default; }
 .pc-thumb { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; margin-bottom:8px; cursor:zoom-in; background:var(--raised); }
 .insp-render { width:100%; border-radius:10px; margin:10px 0; background:var(--raised); }
 img.insp-render { cursor:zoom-in; }
+.insp-strip { display:flex; gap:6px; overflow-x:auto; margin:10px 0; padding-bottom:4px; }
+.insp-strip img { height:120px; width:auto; border-radius:8px; cursor:zoom-in; background:var(--raised); flex:0 0 auto; }
+.pc-thumbs { display:flex; gap:3px; margin-bottom:8px; }
+.pc-thumbs img { flex:1; min-width:0; aspect-ratio:1; object-fit:cover; border-radius:6px; background:var(--raised); }
+.pc-thumbs .more { display:flex; align-items:center; justify-content:center; background:var(--raised); border-radius:6px; font-size:11px; color:var(--muted); flex:0 0 30px; }
 /* 비주얼 생성 패널 */
 #insp-render-panel { display:flex; flex-direction:column; gap:8px; margin-top:12px; padding:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; }
 .rp-head { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:13px; }

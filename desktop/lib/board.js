@@ -290,7 +290,10 @@ function buildBoard(dir) {
     // 렌더 엔진 산출물 — `${chId}-${n}` 프리픽스 파일명으로 이 포스트에 직접 매칭
     const chId = CH_ID[channelKey(post.platform)] || 'etc';
     const rendPrefix = new RegExp(`^${chId}-0*${post.n}(?![0-9])`, 'i');
-    const renders = (lanes.creatives.files || []).filter((f) => rendPrefix.test(f.name) && /\.(png|jpe?g|webp)$/i.test(f.name));
+    // 파일명 순으로 정렬 — 캐러셀 슬라이드 _1,_2,… / 카드뉴스 _c1,_c2… 순서를 보드에 그대로
+    const renders = (lanes.creatives.files || [])
+      .filter((f) => rendPrefix.test(f.name) && /\.(png|jpe?g|webp)$/i.test(f.name))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     const videoRenders = (lanes.videos.files || []).filter((f) => rendPrefix.test(f.name) && /\.(mp4|webm|mov)$/i.test(f.name));
     const visualDone = isReel
       ? videoRenders.length > 0 || topicIn(lanes.videos.norm, post.topic) || topicIn(lanes.storyboards.norm, post.topic)
@@ -311,7 +314,7 @@ function buildBoard(dir) {
       .map((pf) => ({ rel: pf.rel, kind }));
     const files = [...matchFiles(lanes[lane], 'copy', 2)];
     if (isReel) files.push(...matchFiles(lanes.videos, 'video', 1), ...matchFiles(lanes.storyboards, 'board', 1));
-    files.push(...renders.slice(0, 3).map((f) => ({ rel: f.rel, kind: 'render' })));
+    files.push(...renders.slice(0, 10).map((f) => ({ rel: f.rel, kind: 'render' }))); // 캐러셀 여러 장
     files.push(...videoRenders.slice(0, 2).map((f) => ({ rel: f.rel, kind: 'videorender' })));
     files.push(...matchFiles(lanes.creatives, 'creative', 2));
     if (verdict && (lanes.compliance.perFile || []).length) files.push({ rel: lanes.compliance.perFile[0].rel, kind: 'verdict' });

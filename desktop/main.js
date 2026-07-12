@@ -344,12 +344,36 @@ ipcMain.handle('channels:check', () => {
 ipcMain.handle('sec:invalidateChannels', () => { channelCache = { at: 0, data: null }; return { ok: true }; });
 
 // ---- Pipeline stages -------------------------------------------------------
+const autovisual = require('./lib/autovisual');
+let visualsAbort = false; // pipe:stop / auto:stop 이 세우고, 일괄 비주얼 렌더 루프가 확인
+// ima2 설치 여부 힌트 — 렌더 프로바이더 기본값 선택에 필요 (동기 바이너리 확인).
+// checkEnvironment()는 async라 여기선 쓸 수 없다 — proc.resolveCmd로 동기 감지.
+function envHint() {
+  let ima2 = false;
+  try { ima2 = !!proc.resolveCmd('ima2'); } catch { /* PATH 밖 */ }
+  return { ima2 };
+}
+
 // 공용 실행기 — 수동 실행(pipe:runStage)과 오토파일럿이 같은 계측(이벤트/기록/알림)을 쓴다.
 // 잠금은 호출자 책임: 수동은 'stage', 오토파일럿은 런 전체에 'autopilot'을 잡고 들어온다.
 async function execStage(dir, stage, opts) {
   const startedAt = Date.now();
   send('stage', { state: 'start', stage, startedAt, dir });
   try {
+    // visuals-generate 는 앱 렌더 엔진으로 라우팅 — 파이프라인 에이전트는 앱 설정의 키를
+    // 못 보기 때문. 앱 엔진은 설정 키를 쓰고 포스트당 여러 장(캐러셀)을 만든다.
+    if (stage === 'visuals-generate') {
+      visualsAbort = false;
+      const r = await autovisual.renderAll(dir, {
+        ...envHint(), count: (opts && opts.count) || 0, stopped: () => visualsAbort,
+      }, (line) => send('log', { source: stage, line, dir }));
+      history.append({
+        dir, kind: 'stage', stage, engine: r.provider || 'render', model: '',
+        ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: r.resultText || r.note,
+      });
+      if (Date.now() - startedAt > 30_000) notify(`비주얼 생성 ${r.ok ? '완료' : '실패'}`, r.resultText || r.note || '');
+      return { ...r, tail: r.resultText || r.note, startedAt };
+    }
     const r = await pipeline.runStage(dir, stage, opts, (line) => send('log', { source: stage, line, dir }));
     const label = (pipeline.STAGES[stage] || {}).label || stage;
     history.append({
@@ -375,7 +399,26 @@ ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
   try { return await execStage(dir, stage, opts); }
   finally { locks.release(dir, 'stage'); }
 });
-ipcMain.handle('pipe:stop', () => pipeline.stopCurrent());
+ipcMain.handle('pipe:stop', () => { visualsAbort = true; return pipeline.stopCurrent(); });
+// 일괄 비주얼 렌더 — "일괄 비주얼 생성" 버튼 (오토파일럿 없이 수동으로 전 포스트 이미지 생성)
+ipcMain.handle('render:batch', async (_e, dir, opts) => {
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  visualsAbort = false;
+  const startedAt = Date.now();
+  send('stage', { state: 'start', stage: 'visuals-generate', startedAt, dir });
+  try {
+    const r = await autovisual.renderAll(dir, { ...envHint(), ...(opts || {}), stopped: () => visualsAbort }, (line) => send('log', { source: 'visuals-generate', line, dir }));
+    history.append({ dir, kind: 'stage', stage: 'visuals-generate', engine: r.provider || 'render', model: '', ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: r.resultText || r.note });
+    return r;
+  } catch (e) {
+    return { ok: false, error: String(e && e.message || e) };
+  } finally {
+    locks.release(dir, 'stage');
+    send('stage', { state: 'end', stage: 'visuals-generate', startedAt, dir });
+    setTimeout(pushBoard, 300);
+  }
+});
 ipcMain.handle('pipe:openTerminal', safe((_e, dir) =>
   pipeline.openInteractiveTerminal(dir, config.getEngine(), (msg) => send('log', { source: 'terminal-error', line: msg, dir }))));
 
@@ -405,7 +448,7 @@ ipcMain.handle('auto:run', async (_e, dir) => {
     return { ok: false, error: String(e && e.message || e) };
   } finally { locks.release(dir, 'autopilot'); }
 });
-ipcMain.handle('auto:stop', () => autopilot.stop(() => pipeline.stopCurrent()));
+ipcMain.handle('auto:stop', () => autopilot.stop(() => { visualsAbort = true; pipeline.stopCurrent(); }));
 ipcMain.handle('auto:status', () => autopilot.status());
 
 // ---- 실행 기록 ----------------------------------------------------------------
@@ -455,6 +498,45 @@ ipcMain.handle('packs:list', safe(() => promptlab.listPacks().map(({ name, file,
 ipcMain.handle('packs:delete', safe((_e, file) => promptlab.deletePack(file)));
 ipcMain.handle('oc:search', safe((_e, query) => opencrab.search(query)));
 ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
+
+// ---- 전략 추출 + OpenCrab 인제스트 -------------------------------------------------
+const strategy = require('./lib/strategy');
+// 1) 채널별·주제별 전략 문서 생성 (claude, context/strategy/)
+ipcMain.handle('strat:extract', async (_e, dir) => {
+  const lock = locks.acquire(dir, 'stage');
+  if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
+  const startedAt = Date.now();
+  try {
+    const r = await strategy.extract(dir, (line) => send('log', { source: 'strategy', line, dir }));
+    history.append({ dir, kind: 'stage', stage: 'strategy', engine: 'claude', model: config.getModels().claude, ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: r.ok ? `${r.count}개 전략` : r.error });
+    if (r.ok && Date.now() - startedAt > 30_000) notify('전략 추출 완료', `채널 ${r.channels} · 주제 ${r.topics}`);
+    setTimeout(pushBoard, 300);
+    return r;
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  finally { locks.release(dir, 'stage'); }
+});
+ipcMain.handle('strat:list', safe((_e, dir) => strategy.listStrategies(dir).map(({ file, title, kind, chars }) => ({ file, title, kind, chars }))));
+// 2) 전략을 OpenCrab 프로젝트로 인제스트 (발견 기반, 폴백 안내 포함)
+ipcMain.handle('strat:ingest', safe(async (_e, dir, projectName) => {
+  const items = strategy.listStrategies(dir).map((s) => ({
+    text: s.text, title: s.title, source: s.file, kind: s.kind,
+    channel: s.kind === 'channel' ? s.title : undefined, topic: s.kind === 'topic' ? s.title : undefined,
+  }));
+  if (!items.length) return { ok: false, error: '인제스트할 전략 파일이 없습니다 — 먼저 전략 추출을 실행하세요' };
+  send('log', { source: 'opencrab', line: `프로젝트 생성 시도: ${projectName} (전략 ${items.length}개)`, dir });
+  const proj = await opencrab.createProject(projectName, { category: 'social-strategy' });
+  if (proj.unsupported) send('log', { source: 'opencrab', line: `프로젝트 생성 도구 없음 — 발견된 도구: ${(proj.tools || []).join(', ') || '없음'}`, dir });
+  const projectId = proj.ok ? proj.id : null;
+  const ing = await opencrab.ingest(items, projectId);
+  send('log', { source: 'opencrab', line: ing.ok ? `✔ 인제스트 ${ing.ingested}/${ing.total} (도구 ${ing.tool})` : `✖ ${ing.error || '인제스트 실패'}`, dir });
+  return {
+    ok: ing.ok, projectId, projectTool: proj.tool, ingestTool: ing.tool,
+    ingested: ing.ingested || 0, total: items.length,
+    unsupported: proj.unsupported || ing.unsupported || false,
+    note: ing.error || (proj.unsupported ? '엔드포인트에 쓰기 도구가 없어 전략은 로컬(context/strategy/)에만 남았습니다.' : undefined),
+    fails: ing.fails,
+  };
+}));
 
 // ---- 레퍼런스 사이트 분석 (온보딩 준비 레인) ---------------------------------------
 const reference = require('./lib/reference');

@@ -508,12 +508,43 @@ function availability(env) {
 }
 
 // job: {kind:'image'|'video', provider, base, prompt, size, duration?, refAbs?}
+// 캐러셀 슬라이드 지시 — 한 세트로 응집되되 슬라이드마다 앵글·크롭을 달리한다
+function slideDirective(i, n) {
+  return `\n\n(Carousel slide ${i} of ${n}: keep the SAME subject, brand palette, lighting and overall style as one cohesive series, but vary the camera angle / crop / composition so the slides read as a set — not identical duplicates. No text or logos in the image.)`;
+}
 async function generate(dir, job, onLine) {
   const table = job.kind === 'video' ? VIDEO_PROVIDERS : IMAGE_PROVIDERS;
   const fn = table[job.provider];
   if (!fn) return err(job.provider, '알 수 없는 프로바이더');
+  const count = Math.min(10, Math.max(1, Number(job.count) || 1));
+  // 여러 장(캐러셀) — claude-svg는 자체 멀티카드(cards) 경로를 쓰므로 제외.
+  // 사진형 프로바이더는 count번 호출해 base_1..base_N 으로 저장한다 (보드 프리픽스 매칭 유지).
+  if (job.kind === 'image' && count > 1 && job.provider !== 'claude-svg') {
+    const files = [];
+    let firstErr = null;
+    for (let i = 1; i <= count; i++) {
+      if (job.stopped && job.stopped()) break;
+      onLine && onLine(`[render] ${i}/${count}장 생성 중…`);
+      const slideJob = { ...job, count: 1, base: `${job.base}_${i}`, prompt: job.prompt + slideDirective(i, count) };
+      try {
+        const r = await fn(dir, slideJob, onLine);
+        if (r.ok) files.push(...(r.files || [r.rel]));
+        else if (i === 1) return r; // 첫 장이 실패하면 설정 문제 — 즉시 중단
+        else { firstErr = firstErr || r.error; onLine && onLine(`[render] ${i}장째 실패 — 계속: ${r.error}`); }
+      } catch (e) { if (i === 1) return err(job.provider, e && e.message || e); firstErr = firstErr || String(e); }
+    }
+    if (!files.length) return err(job.provider, firstErr || '이미지를 만들지 못했습니다');
+    return { ok: true, provider: job.provider, rel: files[0], files, count: files.length };
+  }
   try { return await fn(dir, job, onLine); }
   catch (e) { return err(job.provider, e && e.message || e); }
 }
 
-module.exports = { generate, availability, SIZES };
+// 기본 이미지 프로바이더 — availability 순서상 첫 번째 사용 가능 항목 (Codex 이미지 우선, 없으면 claude-svg)
+function defaultImageProvider(env) {
+  const av = availability(env || {});
+  const hit = Object.entries(av.image).find(([, v]) => v.ok);
+  return hit ? hit[0] : 'claude-svg';
+}
+
+module.exports = { generate, availability, SIZES, defaultImageProvider };
