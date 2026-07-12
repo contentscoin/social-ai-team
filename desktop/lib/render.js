@@ -517,24 +517,34 @@ async function generate(dir, job, onLine) {
   const fn = table[job.provider];
   if (!fn) return err(job.provider, '알 수 없는 프로바이더');
   const count = Math.min(10, Math.max(1, Number(job.count) || 1));
-  // 여러 장(캐러셀) — claude-svg는 자체 멀티카드(cards) 경로를 쓰므로 제외.
-  // 사진형 프로바이더는 count번 호출해 base_1..base_N 으로 저장한다 (보드 프리픽스 매칭 유지).
+  // claude-svg는 자체 멀티카드(cards) 경로로 N장 — count를 cards로 위임 (안 하면 1장으로 붕괴)
+  if (job.kind === 'image' && count > 1 && job.provider === 'claude-svg' && !job.cards) {
+    return fn(dir, { ...job, cards: count }, onLine).catch((e) => err(job.provider, e && e.message || e));
+  }
+  // 사진형 프로바이더는 count번 호출해 base_1..base_N 으로 저장 (보드 프리픽스 매칭 유지).
+  // 이미 존재하는 슬라이드는 건너뛴다 — 중단·부분 실패 후 재실행 시 빠진 장만 채운다(top-up).
   if (job.kind === 'image' && count > 1 && job.provider !== 'claude-svg') {
+    const cdir = path.join(dir, 'outputs', 'creatives');
+    const hasSlide = (i) => { try { return fs.readdirSync(cdir).some((f) => new RegExp(`^${job.base}_${i}\\.(png|jpe?g|webp)$`, 'i').test(f)); } catch { return false; } };
+    const existRel = (i) => { try { const f = fs.readdirSync(cdir).find((x) => new RegExp(`^${job.base}_${i}\\.(png|jpe?g|webp)$`, 'i').test(x)); return f ? path.join('outputs', 'creatives', f) : null; } catch { return null; } };
     const files = [];
-    let firstErr = null;
+    let firstErr = null, made = 0;
     for (let i = 1; i <= count; i++) {
       if (job.stopped && job.stopped()) break;
+      if (hasSlide(i)) { const r = existRel(i); if (r) files.push(r); continue; } // 이미 있음 — top-up 스킵
       onLine && onLine(`[render] ${i}/${count}장 생성 중…`);
       const slideJob = { ...job, count: 1, base: `${job.base}_${i}`, prompt: job.prompt + slideDirective(i, count) };
       try {
         const r = await fn(dir, slideJob, onLine);
-        if (r.ok) files.push(...(r.files || [r.rel]));
-        else if (i === 1) return r; // 첫 장이 실패하면 설정 문제 — 즉시 중단
+        if (r.ok) { files.push(...(r.files || [r.rel])); made++; }
+        else if (made === 0 && i === 1) return r; // 첫 장부터 실패하면 설정 문제 — 즉시 중단
         else { firstErr = firstErr || r.error; onLine && onLine(`[render] ${i}장째 실패 — 계속: ${r.error}`); }
-      } catch (e) { if (i === 1) return err(job.provider, e && e.message || e); firstErr = firstErr || String(e); }
+      } catch (e) { if (made === 0 && i === 1) return err(job.provider, e && e.message || e); firstErr = firstErr || String(e); }
     }
     if (!files.length) return err(job.provider, firstErr || '이미지를 만들지 못했습니다');
-    return { ok: true, provider: job.provider, rel: files[0], files, count: files.length };
+    // 파일명 순 정렬 — _1,_2,… 순서 보장
+    files.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return { ok: true, provider: job.provider, rel: files[0], files, count: files.length, requested: count };
   }
   try { return await fn(dir, job, onLine); }
   catch (e) { return err(job.provider, e && e.message || e); }

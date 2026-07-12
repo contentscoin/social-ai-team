@@ -40,6 +40,8 @@ async function extract(dir, onLine) {
   const src = sources(dir);
   if (!src.length) return { ok: false, error: '전략을 뽑을 재료가 없습니다 — 먼저 온보딩(brand-style)과 캘린더를 준비하세요' };
   fs.mkdirSync(path.join(dir, 'context', 'strategy'), { recursive: true });
+  // 이전 실행이 남긴 파일로 성공을 오판하지 않게, 실행 전 파일 목록을 스냅샷
+  const before = new Set(listStrategies(dir).map((m) => m.file));
   onLine && onLine(`[전략] 재료 ${src.length}개로 채널별·주제별 전략 추출 중…`);
   const model = config.getModels().claude;
   const args = ['-p', '--permission-mode', 'acceptEdits', '--add-dir', dir];
@@ -57,6 +59,12 @@ async function extract(dir, onLine) {
     `추측이 필요한 부분은 "(가설 — 검증 필요)"로 표시하라. 완료 후 생성한 파일 목록만 출력하고 종료하라. 운영자에게 질문하지 말라.`;
   const r = await runCmd('claude', args, (l) => onLine && onLine(l), { cwd: dir, stdinText: prompt, timeoutMs: 8 * 60_000 });
   const made = listStrategies(dir);
+  const fresh = made.filter((m) => !before.has(m.file));
+  // claude가 실패(비정상 종료/타임아웃)했고 이번 실행에서 새로 생긴 파일도 없으면 실패로 본다
+  // — 이전 실행이 남긴 파일 존재만으로 성공을 오판하지 않게
+  if (!r.ok && !fresh.length) {
+    return { ok: false, error: '전략 추출이 실패했습니다' + (r.timedOut ? ' (시간 초과)' : '') + (r.tail ? ` — ${String(r.tail).slice(-150)}` : '') };
+  }
   if (!made.length) {
     return { ok: false, error: '전략 파일이 생성되지 않았습니다' + (r.tail ? ` (${String(r.tail).slice(-150)})` : '') };
   }

@@ -436,7 +436,7 @@ function makeCard(p) {
     const im = $('.pc-thumb', el);
     const strip = document.createElement('div');
     strip.className = 'pc-thumbs';
-    strip.innerHTML = renders.slice(0, 4).map((r) => `<img src="${satUrl(r)}" class="zoomable" alt="">`).join('')
+    strip.innerHTML = renders.slice(0, 4).map((r) => `<img src="${satUrl(r)}" class="zoomable" alt="" loading="lazy">`).join('')
       + (renders.length > 4 ? `<span class="more">+${renders.length - 4}</span>` : '');
     im.replaceWith(strip);
   } else if (p.thumb) {
@@ -795,7 +795,7 @@ function renderCTA() {
     label.textContent = `중지 · ${fmtDur(Date.now() - S.runStart)}`;
     cta.onclick = async () => {
       if (S.auto) { await window.api.auto.stop(); } // 오토파일럿 중이면 파일럿째 중지 (다음 단계로 안 넘어가게)
-      else await window.api.pipe.stop();
+      else await window.api.pipe.stop(S.client && S.client.dir);
       setRunning(null);
     };
     return;
@@ -1247,7 +1247,7 @@ function openInspector(p) {
     ${(() => {
       const imgs = (p.files || []).filter((f) => f.kind === 'render').map((f) => f.rel);
       if (!imgs.length && p.thumb) imgs.push(p.thumb);
-      return imgs.length ? `<div class="insp-strip">${imgs.map((r) => `<img class="zoomable" src="${satUrl(r)}" alt="렌더">`).join('')}</div>` : '';
+      return imgs.length ? `<div class="insp-strip">${imgs.map((r) => `<img class="zoomable" src="${satUrl(r)}" alt="렌더" loading="lazy">`).join('')}</div>` : '';
     })()}
     ${p.videoThumb ? `<video class="insp-render" src="${satUrl(p.videoThumb)}" controls preload="metadata"></video>` : ''}
     <div id="insp-preview"></div>
@@ -1497,9 +1497,10 @@ async function openCompose(chKey, p, direct) {
     </div>`;
   const ta = $('#cmp-text');
   const chained = () => canChain && $('#cmp-chain') && $('#cmp-chain').checked;
-  // 스킬의 "Post 1/[n]:"·"1/3" 마커, "---", 빈 줄 2개를 경계로 — 마커는 제거 (실제 게시엔 번호 표기 없음)
-  const TH_M = /^\s*(?:post\s*)?\d+\s*\/\s*\[?\d*\]?\s*[:.)]?\s*/i;
-  const splitChain = (t) => t.split(/\n\s*(?:---+|===+)\s*\n|\n(?=\s*(?:post\s*)?\d+\s*\/\s*\[?\d)|\n{2,}/i)
+  // 체인 모드는 운영자가 명시 선택 — "---"·빈 줄·"Post 1/n" 줄머리를 경계로 나누고,
+  // 조각 앞머리 마커만 보수적으로 제거 (콜론 등이 뒤따를 때만 → "3/4"·"2026/07" 본문 보존)
+  const TH_M = /^\s*(?:post\s+)?\d+\s*\/\s*(?:\[[^\]]*\]\s*[:.)]?|\d+\s*[:.)])\s*/i;
+  const splitChain = (t) => t.split(/\n\s*(?:---+|===+)\s*\n|\n(?=\s*(?:post\s+)?\d+\s*\/\s*(?:\[[^\]]*\]|\d+)\s*[:.)])|\n{2,}/i)
     .map((s) => s.replace(TH_M, '').trim()).filter(Boolean);
   const updCount = () => {
     const el = $('#cmp-count');

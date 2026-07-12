@@ -26,12 +26,15 @@ async function renderAll(dir, opts, onLine) {
   const b = board.buildBoard(dir);
   const provider = opts.provider || render.defaultImageProvider({ ima2: opts.ima2 });
   // 사진형 이미지가 필요한 포스트: 카피가 생겼고(stage ≥ copy) 릴스가 아닌 것.
-  // onlyMissing이면 이미 렌더 이미지가 있는 카드는 건너뛴다 (재실행 시 중복·비용 방지).
+  // onlyMissing이면 "필요한 장수만큼 이미 있는" 카드만 건너뛴다 — 썸네일 하나만 보고
+  // 완료로 치면 2/5 상태 카드가 영영 안 채워진다. 부분 완성 카드는 대상에 포함해 top-up.
   const onlyMissing = opts.onlyMissing !== false;
+  const renderCount = (p) => (p.files || []).filter((f) => f.kind === 'render').length;
+  const wantCount = (p) => Number(opts.count) > 0 ? Number(opts.count) : inferCount(p, 1);
   const targets = (b.posts || []).filter((p) =>
     !p.isReel &&
     ['copy', 'visual', 'review', 'ready'].includes(p.stage) &&
-    (!onlyMissing || !p.thumb));
+    (!onlyMissing || renderCount(p) < wantCount(p)));
   if (!targets.length) {
     return { ok: true, provider, rendered: 0, results: [], note: '렌더할 포스트가 없습니다 (카피가 있고 아직 이미지가 없는 사진형 포스트 대상)' };
   }
@@ -40,7 +43,7 @@ async function renderAll(dir, opts, onLine) {
   for (const p of targets) {
     if (opts.stopped && opts.stopped()) { onLine && onLine('[비주얼] 중지됨'); break; }
     const cid = `${p.chId || 'etc'}-${p.n}`;
-    const count = Number(opts.count) > 0 ? Number(opts.count) : inferCount(p, 1);
+    const count = wantCount(p);
     const size = inferSize(p);
     const brief = [p.topic, p.visual && `비주얼 디렉션: ${p.visual}`, p.angle && `앵글: ${p.angle}`, p.pillar && `필러: ${p.pillar}`].filter(Boolean).join('\n');
     onLine && onLine(`[비주얼] ${cid} — ${count}장 (${size}) 준비`);

@@ -345,7 +345,11 @@ ipcMain.handle('sec:invalidateChannels', () => { channelCache = { at: 0, data: n
 
 // ---- Pipeline stages -------------------------------------------------------
 const autovisual = require('./lib/autovisual');
-let visualsAbort = false; // pipe:stop / auto:stop 이 세우고, 일괄 비주얼 렌더 루프가 확인
+// 워크스페이스별 비주얼 렌더 중단 플래그 — 프로세스 전역 하나면 다른 dir의 렌더를 함께 죽인다.
+const renderStops = new Map(); // dir → true(중단 요청)
+const stopRender = (dir) => { if (dir) renderStops.set(dir, true); };
+const armRender = (dir) => { renderStops.set(dir, false); };
+const isRenderStopped = (dir) => renderStops.get(dir) === true;
 // ima2 설치 여부 힌트 — 렌더 프로바이더 기본값 선택에 필요 (동기 바이너리 확인).
 // checkEnvironment()는 async라 여기선 쓸 수 없다 — proc.resolveCmd로 동기 감지.
 function envHint() {
@@ -363,9 +367,9 @@ async function execStage(dir, stage, opts) {
     // visuals-generate 는 앱 렌더 엔진으로 라우팅 — 파이프라인 에이전트는 앱 설정의 키를
     // 못 보기 때문. 앱 엔진은 설정 키를 쓰고 포스트당 여러 장(캐러셀)을 만든다.
     if (stage === 'visuals-generate') {
-      visualsAbort = false;
+      armRender(dir);
       const r = await autovisual.renderAll(dir, {
-        ...envHint(), count: (opts && opts.count) || 0, stopped: () => visualsAbort,
+        ...envHint(), count: (opts && opts.count) || 0, stopped: () => isRenderStopped(dir),
       }, (line) => send('log', { source: stage, line, dir }));
       history.append({
         dir, kind: 'stage', stage, engine: r.provider || 'render', model: '',
@@ -399,16 +403,16 @@ ipcMain.handle('pipe:runStage', async (_e, dir, stage, opts) => {
   try { return await execStage(dir, stage, opts); }
   finally { locks.release(dir, 'stage'); }
 });
-ipcMain.handle('pipe:stop', () => { visualsAbort = true; return pipeline.stopCurrent(); });
+ipcMain.handle('pipe:stop', (_e, dir) => { stopRender(dir); return pipeline.stopCurrent(); });
 // 일괄 비주얼 렌더 — "일괄 비주얼 생성" 버튼 (오토파일럿 없이 수동으로 전 포스트 이미지 생성)
 ipcMain.handle('render:batch', async (_e, dir, opts) => {
   const lock = locks.acquire(dir, 'stage');
   if (!lock.ok) return { ok: false, error: locks.busyMessage(dir) };
-  visualsAbort = false;
+  armRender(dir);
   const startedAt = Date.now();
   send('stage', { state: 'start', stage: 'visuals-generate', startedAt, dir });
   try {
-    const r = await autovisual.renderAll(dir, { ...envHint(), ...(opts || {}), stopped: () => visualsAbort }, (line) => send('log', { source: 'visuals-generate', line, dir }));
+    const r = await autovisual.renderAll(dir, { ...envHint(), ...(opts || {}), stopped: () => isRenderStopped(dir) }, (line) => send('log', { source: 'visuals-generate', line, dir }));
     history.append({ dir, kind: 'stage', stage: 'visuals-generate', engine: r.provider || 'render', model: '', ok: !!r.ok, ms: Date.now() - startedAt, startedAt, note: r.resultText || r.note });
     return r;
   } catch (e) {
@@ -448,7 +452,7 @@ ipcMain.handle('auto:run', async (_e, dir) => {
     return { ok: false, error: String(e && e.message || e) };
   } finally { locks.release(dir, 'autopilot'); }
 });
-ipcMain.handle('auto:stop', () => autopilot.stop(() => { visualsAbort = true; pipeline.stopCurrent(); }));
+ipcMain.handle('auto:stop', () => autopilot.stop(() => { stopRender(autopilot.status().dir); pipeline.stopCurrent(); }));
 ipcMain.handle('auto:status', () => autopilot.status());
 
 // ---- 실행 기록 ----------------------------------------------------------------

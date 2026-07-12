@@ -129,38 +129,41 @@ async function threadsPost(c, text, replyToId) {
   if (!pub.ok || !pub.json || !pub.json.id) throw new Error((pub.json && pub.json.error && pub.json.error.message) || `HTTP ${pub.status}`);
   return pub.json.id;
 }
-// 본문을 체인 세그먼트로 분리 — 명시 segments 우선.
-// threads-writer 스킬의 "Post 1/[n]:" / "1/3" 마커, "---", 빈 줄 2개를 경계로 인식하고
-// 각 조각 앞머리의 번호 마커는 제거한다 (실제 게시 본문에는 "Post 1/3" 표기가 없어야).
-const TH_MARKER = /^\s*(?:post\s*)?\d+\s*\/\s*\[?\d*\]?\s*[:.)]?\s*/i;
-function splitThreadSegments(text, segments) {
-  const clean = (s) => String(s).replace(TH_MARKER, '').trim();
-  if (Array.isArray(segments) && segments.length) return segments.map(clean).filter(Boolean);
-  const parts = String(text).split(/\n\s*(?:---+|===+)\s*\n|\n(?=\s*(?:post\s*)?\d+\s*\/\s*\[?\d)|\n{2,}/i);
-  const out = parts.map(clean).filter(Boolean);
-  return out.length ? out : [clean(text)];
-}
+// 체인 세그먼트 정리 — 조각 앞머리의 "Post 1/3:" 같은 스레드 마커만 제거한다.
+// 보수적: 뒤에 콜론/마침표/닫는괄호가 오거나 "[n]" 리터럴이 있을 때만 마커로 인정해,
+// 레시피 "1/2 컵"·날짜 "2026/07"·분수 "3/4"를 본문에서 지우지 않는다.
+// 대괄호 총량 표기 "N/[n]"은 콜론 없이도 마커, 숫자 총량 "N/M"은 콜론 등이 뒤따를 때만
+const TH_MARKER = /^\s*(?:post\s+)?\d+\s*\/\s*(?:\[[^\]]*\]\s*[:.)]?|\d+\s*[:.)])\s*/i;
+function cleanSeg(s) { return String(s).replace(TH_MARKER, '').trim(); }
+// 주의: 자동 분할은 하지 않는다 — 명시 segments(운영자가 체인 모드에서 나눈 것)만 체인으로.
+// 그래야 단일 글의 빈 줄·"3/4" 같은 정상 본문이 체인으로 오분할되지 않는다.
 async function publishThreads({ text, segments }) {
   const c = secrets.get('threads');
   if (!c.userId || !c.token) return fail('threads', 'Threads 사용자 ID와 토큰이 필요합니다 — 설정 → 채널');
-  const parts = splitThreadSegments(text, segments).filter((p) => p.length);
+  const chain = Array.isArray(segments) && segments.length > 1;
+  const parts = (chain ? segments.map(cleanSeg) : [String(text).trim()]).filter((p) => p.length);
   if (!parts.length) return fail('threads', '발행할 본문이 없습니다');
+  // 500자 초과 세그먼트는 자르지 않고 실패시켜 운영자가 손보게
+  const tooLong = parts.findIndex((p) => p.length > 500);
+  if (tooLong >= 0) return fail('threads', `${tooLong + 1}번째 ${chain ? '조각' : '글'}이 500자를 초과합니다 (${parts[tooLong].length}자) — 나눠주세요`);
+  let firstId = null, prevId = null, published = 0;
   try {
-    // 500자 초과 세그먼트는 안내 (Threads 제한) — 자르지 않고 실패시켜 운영자가 손보게
-    const tooLong = parts.findIndex((p) => p.length > 500);
-    if (tooLong >= 0) return fail('threads', `${tooLong + 1}번째 세그먼트가 500자를 초과합니다 (${parts[tooLong].length}자) — 나눠주세요`);
-    let firstId = null, prevId = null, published = 0;
     for (let i = 0; i < parts.length; i++) {
       const id = await threadsPost(c, parts[i], i === 0 ? null : prevId);
       if (i === 0) firstId = id;
       prevId = id; published++;
       if (i < parts.length - 1) await new Promise((r) => setTimeout(r, 1200)); // 컨테이너 처리 여유
     }
-    return {
-      ok: true, channel: 'threads', id: firstId, chain: published,
-      url: firstId ? `https://www.threads.net/t/${firstId}` : null,
-    };
-  } catch (e) { return fail('threads', e.message); }
+    return { ok: true, channel: 'threads', id: firstId, chain: published, url: firstId ? `https://www.threads.net/t/${firstId}` : null };
+  } catch (e) {
+    // 체인 중간 실패 — 앞 조각들은 이미 라이브다. 부분 상태를 반드시 보고한다.
+    if (published > 0) {
+      return { ok: false, channel: 'threads', partial: true, published, total: parts.length, id: firstId,
+        url: firstId ? `https://www.threads.net/t/${firstId}` : null,
+        error: `${parts.length}개 중 ${published}개까지 발행된 뒤 실패했습니다 (${published + 1}번째): ${e.message}. 앞 ${published}개는 이미 게시됨 — 나머지는 이어서 손수 올리세요.` };
+    }
+    return fail('threads', e.message);
+  }
 }
 async function testThreads() {
   const c = secrets.get('threads');

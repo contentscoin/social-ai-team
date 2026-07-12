@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   pipe: {
     runStage: (dir, stage, opts) => ipcRenderer.invoke('pipe:runStage', dir, stage, opts),
-    stop: () => ipcRenderer.invoke('pipe:stop'),
+    stop: (dir) => ipcRenderer.invoke('pipe:stop', dir),
     openTerminal: (dir) => ipcRenderer.invoke('pipe:openTerminal', dir),
   },
   engine: {

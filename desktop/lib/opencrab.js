@@ -124,20 +124,31 @@ async function ingest(items, projectId) {
       error: '이 엔드포인트에 인제스트(쓰기) 도구가 없습니다 — opencrab.sh는 읽기 전용일 수 있습니다. 이 경우 전략 파일은 로컬(context/strategy/)에 남고, OpenCrab CLI의 팩 업로드로 올려야 합니다.' };
   }
   const props = schemaProps(ingestT);
-  const bodyKey = Object.keys(props).find((k) => /text|content|document|body/i.test(k)) || 'text';
-  const srcKey = Object.keys(props).find((k) => /source|id|title|name/i.test(k));
-  const projKey = Object.keys(props).find((k) => /pack|project|space|tenant|kb/i.test(k));
-  let ok = 0; const fails = [];
+  const keys = Object.keys(props);
+  const bodyKey = keys.find((k) => /text|content|document|body/i.test(k)) || 'text';
+  // 대상 프로젝트 필드를 먼저 확정 — pack/project/space/tenant/kb
+  const projKey = keys.find((k) => /pack|project|space|tenant|kb/i.test(k));
+  // 소스 필드는 projKey와 겹치지 않게: source 우선, 그다음 순수 id/title/name (단 projKey 제외)
+  const srcKey = keys.find((k) => /source/i.test(k))
+    || keys.find((k) => k !== projKey && k !== bodyKey && /(^|_)(id|title|name)$/i.test(k))
+    || keys.find((k) => k !== projKey && k !== bodyKey && /source|id|title|name/i.test(k));
+  const LIMIT = 200 * 1024;
+  let ok = 0, truncated = 0; const fails = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    const args = { [bodyKey]: String(it.text || '').slice(0, 200 * 1024) };
-    if (srcKey) args[srcKey] = it.source || it.title || `doc-${i + 1}`;
+    const full = String(it.text || '');
+    const body = full.length > LIMIT ? full.slice(0, LIMIT) : full;
+    if (full.length > LIMIT) truncated++;
+    const args = { [bodyKey]: body };
+    if (srcKey && srcKey !== projKey) args[srcKey] = it.source || it.title || `doc-${i + 1}`;
     if (projKey && projectId) args[projKey] = projectId;
     if (props.metadata) args.metadata = { title: it.title, kind: it.kind, channel: it.channel, topic: it.topic };
-    try { await callTool(ep, ingestT.name, args, 10 + i); ok++; }
+    // id 충돌 방지 — init(1)/list(3)/create(6)와 안 겹치게 20부터
+    try { await callTool(ep, ingestT.name, args, 20 + i); ok++; }
     catch (e) { fails.push(`${it.title || i}: ${e.message}`); }
   }
-  return { ok: ok > 0, tool: ingestT.name, ingested: ok, total: items.length, fails };
+  return { ok: ok > 0, tool: ingestT.name, ingested: ok, total: items.length, fails, truncated,
+    note: truncated ? `${truncated}개 문서가 200KB로 잘렸습니다` : undefined };
 }
 
 // 팩 내용 로드 — 서버의 콘텐츠 도구를 탐색해 시도, 없으면 메타데이터를 참조 노트로 저장
