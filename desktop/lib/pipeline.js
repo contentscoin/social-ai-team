@@ -78,7 +78,7 @@ function runStage(dir, stage, opts = {}, onLine) {
   const model = config.getModels().claude; // 파이프라인은 항상 Claude — 모델만 선택 적용
   if (model) args.push('--model', model);
   const stdinText = spec.prompt + extra;
-  const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
+  const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401|Not logged in|Unauthorized/i;
   let parser;
   const prettyFeed = () => {
     // NDJSON 이벤트를 운영자가 읽는 활동 라인으로 변환해 onLine에 흘린다

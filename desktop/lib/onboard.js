@@ -102,12 +102,27 @@ function refContext(dir) {
   const p = path.join(dir, 'context', 'references', 'site-analysis.md');
   try { return fs.readFileSync(p, 'utf8').slice(0, 6000); } catch { return ''; }
 }
+const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401|Not logged in|Unauthorized/i;
 async function claude(dir, prompt, timeoutMs) {
   const model = config.getModels().claude;
   const args = ['-p', '--permission-mode', 'acceptEdits', '--add-dir', dir];
   if (model) args.push('--model', model);
-  return runCmd('claude', args, null, { cwd: dir, stdinText: prompt, timeoutMs });
+  const run = (env) => runCmd('claude', args, null, { cwd: dir, stdinText: prompt, timeoutMs, env });
+  let r = await run();
+  if (!r.ok && AUTH_FAIL.test(r.out)) {
+    // 흔한 원인: PC에 남은 무효한 ANTHROPIC_API_KEY가 구독 로그인을 가로챔 → 키 없이 1회 재시도
+    if (process.env.ANTHROPIC_API_KEY) {
+      const retry = await run({ ANTHROPIC_API_KEY: undefined });
+      if (retry.ok) return retry;
+      r = retry;
+    }
+    if (!r.ok && AUTH_FAIL.test(r.out)) r = { ...r, authFail: true };
+  }
+  return r;
 }
+const LOGIN_HINT =
+  'claude CLI 로그인이 필요합니다 — "디렉터와 대화 (터미널)" 버튼으로 터미널을 열어 /login 으로 로그인한 뒤 다시 실행하세요. ' +
+  'ANTHROPIC_API_KEY 환경변수가 있다면 유효한지 확인/제거하세요.';
 
 // 2차 — 답변의 공백·모순만 겨냥한 후속 질문을 한 번에 생성 (없으면 빈 배열)
 async function followups(dir, answers, onLine) {
@@ -124,6 +139,7 @@ async function followups(dir, answers, onLine) {
     `[1차 답변]\n${answersToMd('1차 질문지 답변', answers)}\n` +
     (ref ? `\n[레퍼런스 사이트 분석 (이미 아는 정보)]\n${ref}\n` : '');
   const r = await claude(dir, prompt, 3 * 60_000);
+  if (r.authFail) return { ok: true, questions: [], note: `후속 질문 생성 건너뜀 — ${LOGIN_HINT}` };
   if (!r.ok) return { ok: true, questions: [], note: '후속 질문 생성 실패 — 1차 답변만으로 진행합니다' };
   // claude -p 기본 출력은 텍스트 — JSON 배열을 관대하게 추출.
   // 모델이 {"questions":[...]}로 감싸는 흔한 이탈도 수용하고, 파싱 실패는 "질문 0개"와 구별해 note로 알린다.
@@ -185,11 +201,12 @@ async function finalize(dir, answers, followupAnswers, onLine) {
   const brandTouched = brandNow && (!hasBrand || (fs.statSync(brandPath).mtimeMs > brandMtime0));
   const brandOk = brandNow && (r.ok || brandTouched);
   if (!brandOk) {
-    return {
-      ok: false,
-      error: '합성 실패 — 답변은 context/onboarding-answers.md에 저장됐습니다. 디렉터 채팅에서 "onboarding-answers.md로 brand-style.md를 만들어줘"로 재시도하세요.'
-        + (r.tail ? ` (${String(r.tail).slice(-150)})` : ''),
-    };
+    // 로그인 안 된 상태에서 "디렉터 채팅으로 재시도"를 안내하면 채팅도 똑같이 실패한다 — 진짜 원인을 먼저 알린다
+    const error = r.authFail
+      ? `합성 실패 — ${LOGIN_HINT} 답변은 context/onboarding-answers.md에 저장돼 있어 로그인 후 온보딩을 다시 실행하면 이어집니다.`
+      : '합성 실패 — 답변은 context/onboarding-answers.md에 저장됐습니다. 디렉터 채팅에서 "onboarding-answers.md로 brand-style.md를 만들어줘"로 재시도하세요.'
+        + (r.tail ? ` (${String(r.tail).slice(-150)})` : '');
+    return { ok: false, error };
   }
   onLine && onLine('[onboard] ✔ 온보딩 완료');
   return {
