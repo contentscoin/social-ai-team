@@ -17,6 +17,12 @@ function sources(dir) {
     ['references/site-analysis.md', ctx('references/site-analysis.md')],
     ['onboarding-answers.md', ctx('onboarding-answers.md')],
   ];
+  // OpenCrab에서 가져온 지식 문서도 전략 추출의 입력으로 쓴다
+  try {
+    for (const f of fs.readdirSync(path.join(dir, 'context', 'knowledge'))) {
+      if (/\.md$/i.test(f)) cand.push([`knowledge/${f}`, path.join(dir, 'context', 'knowledge', f)]);
+    }
+  } catch { /* 지식 폴더 없음 */ }
   return cand.filter(([, p]) => fs.existsSync(p)).map(([name, p]) => ({ name, path: p }));
 }
 

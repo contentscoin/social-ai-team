@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { runCmd } = require('./proc');
 const config = require('./config');
+const knowledge = require('./knowledge');
 
 // ---- 1차 질문지 (렌더러가 폼으로 그린다 — 전부 선택 답변) ------------------------------
 const QUESTIONNAIRE = [
@@ -193,7 +194,8 @@ async function finalize(dir, answers, followupAnswers, onLine) {
       `2) context/kr-voice-profile.md — kr-voice-localizer 스킬의 프로파일 구조를 따라 초안을 작성하라 ` +
       `(말투/어미 다양화 규칙/이모지 정책/금지 표현/해시태그 정책). 맨 위에 "> ⚠ 질문지 기반 자동 초안 — 필요 시 /kr-voice-localizer 인테이크로 정밀화"를 넣어라.\n`) +
     `${hasVoice ? '2' : '3'}) 답변이 비어 있는 항목은 ${ref ? '레퍼런스 분석으로 보완하고, 그래도 없으면' : ''} 합리적 기본값을 쓰되 문서에 "(기본값 — 확인 필요)"로 표시하라.\n` +
-    `완료 후 생성/수정한 파일 목록만 한 줄씩 출력하고 종료하라. 운영자에게 질문하지 말라.`;
+    `완료 후 생성/수정한 파일 목록만 한 줄씩 출력하고 종료하라. 운영자에게 질문하지 말라.` +
+    knowledge.hint(dir);
   const r = await claude(dir, prompt, 6 * 60_000);
   // 성공 판정: 새로 생성됐거나(부재→존재), 기존 파일이 실제로 갱신됐거나, claude가 정상 종료
   // — 기존 brand-style이 있는 상태에서 claude가 실패했는데 "존재하니 성공"으로 위장하지 않게

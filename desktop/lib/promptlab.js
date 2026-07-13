@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { runCmd } = require('./proc');
 const config = require('./config');
+const knowledge = require('./knowledge');
 const { findVisualDirection } = require('./postblock');
 
 // ---- 팩 로딩 ----------------------------------------------------------------------
@@ -107,6 +108,7 @@ function parseJsonLoose(out) {
 }
 async function claudeCompile(dir, job, brand, vd, onLine) {
   const packs = packContext(job.kind === 'video' ? 'video' : 'image');
+  const know = knowledge.excerpt(dir, 3000);
   const target = job.kind === 'video'
     ? `${job.provider} (image-to-video/text-to-video 영상 모델)`
     : `${job.provider} (사진형 이미지 생성 모델)`;
@@ -123,6 +125,7 @@ async function claudeCompile(dir, job, brand, vd, onLine) {
     (vd ? `카피라이터의 VISUAL DIRECTION (가장 중요한 재료): ${vd}\n` : '') +
     (brand.summary ? `\n[브랜드 무드]\n${brand.summary}\n` : '') +
     (brand.palette.length ? `브랜드 팔레트: ${brand.palette.join(' ')}\n` : '') +
+    (know ? `\n[가져온 지식 (OpenCrab) — 스타일·전략 참고]\n${know}\n` : '') +
     `\n[프롬프트 팩]\n${packs}`;
   const model = config.getModels().claude;
   const args = ['-p', '--output-format', 'json'];

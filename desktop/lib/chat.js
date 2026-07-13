@@ -6,17 +6,19 @@ const path = require('path');
 const fs = require('fs');
 const { runCmd, killTree } = require('./proc');
 const config = require('./config');
+const knowledge = require('./knowledge');
 const { makeParser, finalText } = require('./stream');
 
 const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401|Not logged in|Unauthorized/i;
 
 // Seed instruction so the first Claude turn takes on the director role for this client.
-function claudeSeed(userMsg) {
+function claudeSeed(dir, userMsg) {
   return (
     'You are the team director for this client folder. Run the content-director skill ' +
     '(~/.claude/skills/content-director/SKILL.md): read it and act as the Korean-speaking ' +
     'social content director. Read context/*.md first for state. Converse in Korean. ' +
-    'Do NOT auto-run destructive or publishing steps without the operator confirming in this chat.\n\n' +
+    'Do NOT auto-run destructive or publishing steps without the operator confirming in this chat.' +
+    knowledge.hint(dir) + '\n\n' +
     '운영자 메시지: ' + userMsg
   );
 }
@@ -48,7 +50,7 @@ async function claudeTurn(dir, userMsg, onLine, onEvent) {
   // stream-json으로 실행해 텍스트/도구 활동을 onEvent로 실시간 중계한다 (--verbose 필수).
   let parser;
   const attempt = async (sid) => {
-    const prompt = sid ? userMsg : claudeSeed(userMsg);
+    const prompt = sid ? userMsg : claudeSeed(dir, userMsg);
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--add-dir', dir];
     const model = config.getModels().claude;
     if (model) args.push('--model', model);
@@ -133,8 +135,10 @@ async function codexTurn(dir, userMsg, onLine, onEvent) {
     onLine && onLine(line);
     if (onEvent && line.trim()) { try { onEvent({ kind: 'raw', text: line }); } catch { /* 소비자 보호 */ } }
   };
-  const runOpts = { cwd: dir, stdinText: userMsg, timeoutMs: TURN_TIMEOUT_MS, onSpawn: (c) => { currentChild = c; } };
   const resumeArg = saved && saved !== 'codex-started' ? saved : (saved === 'codex-started' ? '--last' : null);
+  // 새 대화 첫 턴에만 지식 베이스 힌트를 실어 보낸다 (이어지는 턴은 세션이 기억)
+  const firstTurnMsg = resumeArg ? userMsg : userMsg + knowledge.hint(dir);
+  const runOpts = { cwd: dir, stdinText: firstTurnMsg, timeoutMs: TURN_TIMEOUT_MS, onSpawn: (c) => { currentChild = c; } };
   let r = await runCmd('codex', buildArgs(resumeArg), feed, runOpts);
   currentChild = null;
   let configHint = '';
