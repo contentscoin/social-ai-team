@@ -151,6 +151,153 @@ async function ingest(items, projectId) {
     note: truncated ? `${truncated}개 문서가 200KB로 잘렸습니다` : undefined };
 }
 
+// ---- 프로젝트·워크플로우 단위 가져오기 ------------------------------------------------
+// 서버마다 도구 이름이 다르다(opencrab_project_manage / list_workflows 등) — 팩과 동일하게
+// tools/list 발견 기반으로 매칭하고, manage형 도구는 action 필드에 동사를 채운다.
+function fillAction(props, args, verb) {
+  const key = Object.keys(props).find((k) => /^(action|operation|op|mode|command)$/i.test(k));
+  if (!key) return;
+  const en = props[key] && props[key].enum;
+  if (Array.isArray(en) && en.length) {
+    const hit = en.find((v) => new RegExp(verb, 'i').test(String(v)));
+    args[key] = hit || en[0];
+  } else args[key] = verb;
+}
+// 응답에서 엔티티 배열을 관대하게 찾는다 — 최상위 배열 또는 이름이 맞는 첫 배열 필드
+function pickArray(res, keyRe) {
+  if (Array.isArray(res)) return res;
+  if (!res || typeof res !== 'object') return [];
+  for (const [k, v] of Object.entries(res)) if (keyRe.test(k) && Array.isArray(v)) return v;
+  for (const v of Object.values(res)) if (Array.isArray(v) && v.length && typeof v[0] === 'object') return v;
+  return [];
+}
+function normEntity(p) {
+  return {
+    id: String(p.project_id || p.workflow_id || p.package_id || p.id || p.slug || p.name || ''),
+    name: String(p.name || p.title || '(이름 없음)').slice(0, 120),
+    description: String(p.description || p.summary || '').slice(0, 300),
+    docs: p.documents || p.docs || p.doc_count || p.nodes || 0,
+  };
+}
+
+async function listProjects() {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const t = pickTool(tools, /list[_-]?projects?\b/i) || pickTool(tools, /project[_-]?(manage|list)/i);
+  if (!t) return { ok: false, unsupported: true, error: '이 엔드포인트에 프로젝트 목록 도구가 없습니다', tools: tools.map((x) => x.name) };
+  const args = {};
+  fillAction(schemaProps(t), args, 'list');
+  const res = await callTool(ep, t.name, args, 7);
+  const projects = pickArray(res, /projects?|items|packs|results|data/i).map(normEntity).filter((p) => p.id || p.name);
+  return { ok: true, tool: t.name, projects };
+}
+
+async function listWorkflows() {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const t = pickTool(tools, /list[_-]?workflows?\b/i) || pickTool(tools, /workflow[_-]?(manage|list)/i);
+  if (!t) return { ok: false, unsupported: true, error: '이 엔드포인트에 워크플로우 목록 도구가 없습니다', tools: tools.map((x) => x.name) };
+  const args = {};
+  fillAction(schemaProps(t), args, 'list');
+  const res = await callTool(ep, t.name, args, 8);
+  const workflows = pickArray(res, /workflows?|items|results|data/i).map(normEntity).filter((w) => w.id || w.name);
+  return { ok: true, tool: t.name, workflows };
+}
+
+// 스키마 키에 프로젝트/워크플로우 id를 실어 보낸다 — 필드명이 서버마다 달라 패턴 매칭
+function fillId(props, args, idRe, value) {
+  const key = Object.keys(props).find((k) => idRe.test(k));
+  if (key) args[key] = value;
+  return key;
+}
+
+const BODY_CAP = 400 * 1024;
+const DOC_LIMIT = 30;
+
+// 프로젝트의 문서/노드를 모아 markdown 지식 문서 하나로 조립한다.
+// 경로: 문서 목록/검색 도구 → (있으면) 문서별 본문 도구 → 메타데이터 폴백.
+async function fetchProject(project) {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const listT = pickTool(tools, /(list|search)[_-]?(documents?|docs|sources?|nodes?)\b/i);
+  let body = '';
+  let via = 'metadata';
+  let count = 0;
+  if (listT) {
+    const props = schemaProps(listT);
+    const args = {};
+    fillAction(props, args, 'list');
+    const projKey = fillId(props, args, /project|pack|space|tenant|kb/i, project.id || project.name);
+    // 검색형 도구는 질의가 필수일 수 있다 — 프로젝트명을 질의로
+    if (Object.keys(props).some((k) => /^(query|q|search)$/i.test(k)) && !projKey) {
+      args[Object.keys(props).find((k) => /^(query|q|search)$/i.test(k))] = project.name;
+    } else if (props.query) args.query = args.query || project.name;
+    try {
+      const res = await callTool(ep, listT.name, args, 9);
+      const docs = pickArray(res, /documents?|docs|sources?|nodes?|items|results/i).slice(0, DOC_LIMIT);
+      const getT = pickTool(tools, /get[_-]?(node[_-]?context|documents?|docs?|source)\b/i);
+      for (let i = 0; i < docs.length && body.length < BODY_CAP; i++) {
+        const d = docs[i];
+        const title = d.title || d.name || d.source || d.id || `문서 ${i + 1}`;
+        let text = String(d.text || d.content || d.body || d.summary || d.snippet || '');
+        if (getT && d.id) {
+          try {
+            const gp = schemaProps(getT);
+            const ga = {};
+            fillId(gp, ga, /(^|_)(id|node|document|doc)/i, d.id);
+            fillId(gp, ga, /project|pack|space|tenant|kb/i, project.id || project.name);
+            const full = await callTool(ep, getT.name, ga, 40 + i);
+            const fullText = typeof full === 'string' ? full
+              : String(full.text || full.content || full.context || full.body || (full.raw || ''));
+            if (fullText && fullText.length > text.length) text = fullText;
+          } catch { /* 목록의 요약으로 진행 */ }
+        }
+        if (!text) continue;
+        body += `\n\n## ${title}\n${text.slice(0, BODY_CAP - body.length)}`;
+        count++;
+      }
+      if (count) via = listT.name;
+    } catch { /* 메타데이터 폴백 */ }
+  }
+  if (!body) {
+    body = `\n\n- id: ${project.id || '-'}\n- 문서 수: ${project.docs || '-'}\n\n${project.description || ''}\n\n` +
+      `(이 서버에서 프로젝트 문서를 읽을 수 없어 메타데이터만 저장했습니다.)`;
+  }
+  const header = `# ${project.name} (OpenCrab 프로젝트)\n\n> 출처: OpenCrab MCP · 도구 ${via} · 가져온 시각 ${new Date().toISOString()}\n`;
+  return { ok: true, title: project.name, body: header + body, via, docs: count };
+}
+
+// 워크플로우 정의를 가져와 markdown 지식 문서로 저장할 본문을 만든다.
+async function fetchWorkflow(workflow) {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const tools = await listTools(ep);
+  const t = pickTool(tools, /(get|export|detail)[_-]?workflows?\b/i) || pickTool(tools, /workflow[_-]?(manage|get|detail|export)/i);
+  let body = '';
+  let via = 'metadata';
+  if (t) {
+    try {
+      const props = schemaProps(t);
+      const args = {};
+      fillAction(props, args, 'get|export|show|detail');
+      fillId(props, args, /workflow|(^|_)id$|name/i, workflow.id || workflow.name);
+      const res = await callTool(ep, t.name, args, 10);
+      const text = typeof res === 'string' ? res
+        : (res.raw || (Object.keys(res).length ? '```json\n' + JSON.stringify(res, null, 2).slice(0, BODY_CAP) + '\n```' : ''));
+      if (text) { body = `\n\n## 워크플로우 정의\n${String(text).slice(0, BODY_CAP)}`; via = t.name; }
+    } catch { /* 메타데이터 폴백 */ }
+  }
+  if (!body) {
+    body = `\n\n- id: ${workflow.id || '-'}\n\n${workflow.description || ''}\n\n` +
+      `(이 서버에서 워크플로우 정의를 읽을 수 없어 메타데이터만 저장했습니다.)`;
+  }
+  const header = `# ${workflow.name} (OpenCrab 워크플로우)\n\n> 출처: OpenCrab MCP · 도구 ${via} · 가져온 시각 ${new Date().toISOString()}\n`;
+  return { ok: true, title: workflow.name, body: header + body, via };
+}
+
 // 팩 내용 로드 — 서버의 콘텐츠 도구를 탐색해 시도, 없으면 메타데이터를 참조 노트로 저장
 const CONTENT_TOOL_CANDIDATES = /get_pack|pack_content|export_pack|pack_docs|fetch_pack|load_pack|pack_detail/i;
 async function load(pack) {
@@ -183,4 +330,4 @@ async function load(pack) {
   return { ok: true, file: saved.file, via };
 }
 
-module.exports = { search, load, createProject, ingest };
+module.exports = { search, load, createProject, ingest, listProjects, listWorkflows, fetchProject, fetchWorkflow };

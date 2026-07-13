@@ -84,6 +84,16 @@ contextBridge.exposeInMainWorld('api', {
     ocSearch: (query) => ipcRenderer.invoke('oc:search', query),
     ocLoad: (pack) => ipcRenderer.invoke('oc:load', pack),
   },
+  oc: {
+    projects: () => ipcRenderer.invoke('oc:projects'),
+    workflows: () => ipcRenderer.invoke('oc:workflows'),
+    importProject: (dir, project) => ipcRenderer.invoke('oc:importProject', dir, project),
+    importWorkflow: (dir, workflow) => ipcRenderer.invoke('oc:importWorkflow', dir, workflow),
+  },
+  know: {
+    list: (dir) => ipcRenderer.invoke('know:list', dir),
+    delete: (dir, file) => ipcRenderer.invoke('know:delete', dir, file),
+  },
   strat: {
     extract: (dir) => ipcRenderer.invoke('strat:extract', dir),
     list: (dir) => ipcRenderer.invoke('strat:list', dir),

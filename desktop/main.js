@@ -503,6 +503,31 @@ ipcMain.handle('packs:delete', safe((_e, file) => promptlab.deletePack(file)));
 ipcMain.handle('oc:search', safe((_e, query) => opencrab.search(query)));
 ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
 
+// ---- OpenCrab 프로젝트·워크플로우 단위 가져오기 → 클라이언트 지식 베이스 ----------------
+const knowledge = require('./lib/knowledge');
+ipcMain.handle('oc:projects', safe(() => opencrab.listProjects()));
+ipcMain.handle('oc:workflows', safe(() => opencrab.listWorkflows()));
+ipcMain.handle('oc:importProject', safe(async (_e, dir, project) => {
+  send('log', { source: 'opencrab', line: `프로젝트 가져오는 중: ${project.name}`, dir });
+  const r = await opencrab.fetchProject(project);
+  if (!r.ok) return r;
+  const s = knowledge.save(dir, 'project', project.name, r.body);
+  send('log', { source: 'opencrab', line: `✔ ${s.rel} (문서 ${r.docs || 0}개, 도구 ${r.via})`, dir });
+  setTimeout(pushBoard, 300);
+  return { ok: true, file: s.file, rel: s.rel, via: r.via, docs: r.docs };
+}));
+ipcMain.handle('oc:importWorkflow', safe(async (_e, dir, workflow) => {
+  send('log', { source: 'opencrab', line: `워크플로우 가져오는 중: ${workflow.name}`, dir });
+  const r = await opencrab.fetchWorkflow(workflow);
+  if (!r.ok) return r;
+  const s = knowledge.save(dir, 'workflow', workflow.name, r.body);
+  send('log', { source: 'opencrab', line: `✔ ${s.rel} (도구 ${r.via})`, dir });
+  setTimeout(pushBoard, 300);
+  return { ok: true, file: s.file, rel: s.rel, via: r.via };
+}));
+ipcMain.handle('know:list', safe((_e, dir) => knowledge.list(dir)));
+ipcMain.handle('know:delete', safe((_e, dir, file) => knowledge.remove(dir, file)));
+
 // ---- 전략 추출 + OpenCrab 인제스트 -------------------------------------------------
 const strategy = require('./lib/strategy');
 // 1) 채널별·주제별 전략 문서 생성 (claude, context/strategy/)

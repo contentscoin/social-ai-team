@@ -1048,6 +1048,48 @@ function switchDock(name) {
 }
 for (const b of $$('#dock-seg button')) b.onclick = () => switchDock(b.dataset.dock);
 
+// ---- dock: 폭 조절 (좌측 가장자리 드래그, 더블클릭 = 기본 폭) -------------------------------
+(() => {
+  const dock = $('#dock');
+  const grip = $('#dock-resizer');
+  if (!dock || !grip) return;
+  const DEFAULT_W = 400;
+  const MIN_W = 280;
+  const maxW = () => Math.max(MIN_W, Math.floor(window.innerWidth * 0.6));
+  const clamp = (w) => Math.min(maxW(), Math.max(MIN_W, Math.round(w)));
+  const apply = (w) => { dock.style.width = clamp(w) + 'px'; };
+  // 저장된 폭 복원 — 창이 줄어든 상태로 켜져도 화면을 넘지 않게 클램프
+  const saved = Number(localStorage.getItem('dockWidth'));
+  if (saved) apply(saved);
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = dock.getBoundingClientRect().width;
+    document.body.classList.add('dock-resizing');
+    const move = (ev) => apply(startW + (startX - ev.clientX)); // 왼쪽으로 끌면 넓어진다
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('dock-resizing');
+      localStorage.setItem('dockWidth', String(Math.round(dock.getBoundingClientRect().width)));
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    apply(DEFAULT_W);
+    localStorage.setItem('dockWidth', String(DEFAULT_W));
+  });
+  // 창 크기가 줄면 저장 폭이 화면을 삼키지 않게 재클램프
+  window.addEventListener('resize', () => {
+    const w = dock.getBoundingClientRect().width;
+    if (w > maxW()) apply(w);
+  });
+})();
+
 async function renderHistory() {
   const box = $('#dock-history');
   if (!S.client) { box.innerHTML = '<p class="muted" style="padding:14px">클라이언트를 선택하세요</p>'; return; }
@@ -1756,7 +1798,7 @@ const RD_SECRET_FORMS = [
     fields: [['url', 'URL (예: http://127.0.0.1:8188)'], ['workflowPath', '워크플로 JSON 파일 경로']] },
   { ns: 'custom-video', title: '커스텀 HTTP 브릿지', hint: 'POST {prompt, image_b64?, duration} → {video_url|image_url|…_b64} 규약의 자체 엔드포인트 — 아직 내장되지 않은 신생 서비스(Hyperframe 등)를 여기로 연결.',
     fields: [['url', '엔드포인트 URL'], ['headers', '추가 헤더 (JSON, 선택)']] },
-  { ns: 'opencrab', title: 'OpenCrab MCP (프롬프트 팩)', hint: 'opencrab.sh의 내 MCP 엔드포인트(https://opencrab.sh/api/mcp/…)를 넣으면 아래 팩 섹션에서 프롬프트·이미지·영상 팩을 검색해 컴파일러에 로드할 수 있습니다.',
+  { ns: 'opencrab', title: 'OpenCrab MCP (프롬프트 팩 · 프로젝트 · 워크플로우)', hint: 'opencrab.sh의 내 MCP 엔드포인트(https://opencrab.sh/api/mcp/…)를 넣으면 아래 섹션에서 팩 검색·로드는 물론, 프로젝트·워크플로우 단위로 가져와 클라이언트 지식 베이스(context/knowledge/)로 쓸 수 있습니다.',
     fields: [['endpoint', 'MCP 엔드포인트 URL']] },
 ];
 
@@ -1821,6 +1863,66 @@ async function renderPackSection(root) {
     } catch (e) { $('#strat-msg', sbox).textContent = '✖ ' + e.message; }
     finally { b.disabled = false; b.textContent = '인제스트'; }
   };
+  // ── OpenCrab 프로젝트·워크플로우 가져오기 → 클라이언트 지식 베이스 ──
+  const kbox = document.createElement('div');
+  kbox.className = 'sec-form';
+  kbox.innerHTML = `<div class="sec-head"><b>OpenCrab 프로젝트 · 워크플로우 가져오기</b><span class="muted small">클라이언트 지식 베이스</span></div>
+    <p class="muted small" style="margin:4px 0 8px">OpenCrab의 프로젝트(지식팩)나 워크플로우를 통째로 가져와 현재 클라이언트의 <code>context/knowledge/</code>에 저장합니다. 저장된 지식은 캘린더·카피·비주얼·전략·채팅 등 모든 작업에서 자동으로 참조됩니다.</p>
+    <div id="know-list" class="small" style="margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px">
+      <button id="oc-proj-load">프로젝트 목록</button>
+      <button id="oc-wf-load">워크플로우 목록</button>
+      <span class="muted small" id="oc-imp-msg" style="align-self:center"></span>
+    </div>
+    <div id="oc-proj-results" class="small" style="margin-top:8px"></div>
+    <div id="oc-wf-results" class="small" style="margin-top:4px"></div>`;
+  root.appendChild(kbox);
+  const refreshKnow = async () => {
+    if (!S.client) { $('#know-list', kbox).innerHTML = '<span class="muted">클라이언트를 먼저 선택하세요</span>'; return; }
+    const items = await window.api.know.list(S.client.dir);
+    const list = Array.isArray(items) ? items : [];
+    $('#know-list', kbox).innerHTML = list.length
+      ? list.map((k) => `<span class="chip tiny" title="${esc(k.title)}">${k.kind === 'project' ? '📦' : (k.kind === 'workflow' ? '⚙️' : '📄')} ${esc(k.title.slice(0, 24))}
+         <button class="chip tiny" data-knowdel="${esc(k.file)}" style="margin-left:4px">✕</button></span>`).join(' ')
+      : '<span class="muted">가져온 지식 없음</span>';
+    for (const b of $$('[data-knowdel]', kbox)) b.onclick = async () => {
+      await window.api.know.delete(S.client.dir, b.dataset.knowdel);
+      refreshKnow();
+    };
+  };
+  refreshKnow();
+  const renderEntityList = (el, entities, kind) => {
+    el.innerHTML = entities.length ? entities.map((p, i) =>
+      `<div class="env-row" style="padding:4px 0"><b>${esc(p.name)}</b> <span class="chip tiny">${kind === 'project' ? '프로젝트' : '워크플로우'}</span>
+       <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px">${esc((p.description || '').slice(0, 60))}</span>
+       <button class="chip tiny" data-ocimp="${kind}:${i}">가져오기</button></div>`).join('') : '<p class="muted">결과 없음</p>';
+    for (const b of $$('[data-ocimp]', el)) b.onclick = async () => {
+      if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+      const idx = Number(b.dataset.ocimp.split(':')[1]);
+      b.disabled = true; b.textContent = '가져오는 중…';
+      const r = kind === 'project'
+        ? await window.api.oc.importProject(S.client.dir, entities[idx])
+        : await window.api.oc.importWorkflow(S.client.dir, entities[idx]);
+      if (r && r.ok) { toast(`저장됨: ${r.rel}${r.via === 'metadata' ? ' (메타데이터만 — 본문 도구 미제공 서버)' : ''}`); refreshKnow(); }
+      else toast('가져오기 실패: ' + ((r && r.error) || ''));
+      b.disabled = false; b.textContent = '가져오기';
+    };
+  };
+  $('#oc-proj-load', kbox).onclick = async () => {
+    const el = $('#oc-proj-results', kbox);
+    el.innerHTML = '<span class="muted">불러오는 중…</span>';
+    const r = await window.api.oc.projects();
+    if (!r || r.error || !r.ok) { el.innerHTML = `<span style="color:var(--warn)">${esc((r && r.error) || '프로젝트 목록 실패 — 엔드포인트를 확인하세요')}</span>`; return; }
+    renderEntityList(el, r.projects, 'project');
+  };
+  $('#oc-wf-load', kbox).onclick = async () => {
+    const el = $('#oc-wf-results', kbox);
+    el.innerHTML = '<span class="muted">불러오는 중…</span>';
+    const r = await window.api.oc.workflows();
+    if (!r || r.error || !r.ok) { el.innerHTML = `<span style="color:var(--warn)">${esc((r && r.error) || '워크플로우 목록 실패 — 엔드포인트를 확인하세요')}</span>`; return; }
+    renderEntityList(el, r.workflows, 'workflow');
+  };
+
   const refreshList = async () => {
     const packs = await window.api.packs.list();
     $('#pack-list', box).innerHTML = (Array.isArray(packs) ? packs : []).map((p) =>

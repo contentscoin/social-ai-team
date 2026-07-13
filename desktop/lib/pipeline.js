@@ -4,6 +4,7 @@
 const { spawn } = require('child_process');
 const { runCmd, envWithPath, isWin } = require('./proc');
 const config = require('./config');
+const knowledge = require('./knowledge');
 const { makeParser, finalText } = require('./stream');
 
 const isMac = process.platform === 'darwin';
@@ -77,8 +78,9 @@ function runStage(dir, stage, opts = {}, onLine) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--add-dir', dir];
   const model = config.getModels().claude; // 파이프라인은 항상 Claude — 모델만 선택 적용
   if (model) args.push('--model', model);
-  const stdinText = spec.prompt + extra;
-  const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401/i;
+  // OpenCrab에서 가져온 지식(context/knowledge/)이 있으면 모든 스테이지가 참조하게 지시
+  const stdinText = spec.prompt + extra + knowledge.hint(dir);
+  const AUTH_FAIL = /Invalid authentication credentials|Failed to authenticate|status.?401|Not logged in|Unauthorized/i;
   let parser;
   const prettyFeed = () => {
     // NDJSON 이벤트를 운영자가 읽는 활동 라인으로 변환해 onLine에 흘린다
