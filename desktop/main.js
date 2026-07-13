@@ -502,6 +502,12 @@ ipcMain.handle('packs:list', safe(() => promptlab.listPacks().map(({ name, file,
 ipcMain.handle('packs:delete', safe((_e, file) => promptlab.deletePack(file)));
 ipcMain.handle('oc:search', safe((_e, query) => opencrab.search(query)));
 ipcMain.handle('oc:load', safe((_e, pack) => opencrab.load(pack)));
+// 팩을 현재 클라이언트의 채널 카피 전략으로 로드 (시각 컴파일러와 분리 — 카피 경로로만)
+ipcMain.handle('oc:loadChannel', safe(async (_e, pack, dir, channel) => {
+  const r = await opencrab.loadToChannel(pack, dir, channel);
+  send('log', { source: 'opencrab', line: `채널 전략 로드: ${r.file} (채널 ${r.channel}${r.via === 'metadata' ? ', 메타데이터만' : ''})`, dir });
+  return r;
+}));
 
 // ---- 전략 추출 + OpenCrab 인제스트 -------------------------------------------------
 const strategy = require('./lib/strategy');

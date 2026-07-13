@@ -27,6 +27,8 @@ const STAGES = {
     prompt:
       'content-director 스킬의 Route B 3단계만 수행: context/content-calendar.md에 등장하는 플랫폼을 확인하고 ' +
       'copywriter 에이전트를 플랫폼별로 병렬 디스패치하라 (instagram/facebook, linkedin, threads, x, naver 중 캘린더에 있는 것만). ' +
+      '각 플랫폼 디스패치 시, 해당 채널의 상위노출 레퍼런스(context/strategy/channel-<플랫폼>-topexposure.md)와 파생 전략(channel-<플랫폼>.md)이 있으면 ' +
+      'copywriter가 배정 플랫폼 파일만 읽어 훅·포맷·리듬을 미러링하도록 지시하라(다른 플랫폼 채널 파일 참조 금지). ' +
       '전부 돌아오면 Phase 3 핸드오프 검증을 수행하고 플랫폼별 결과 요약만 출력하고 종료하라. 승인 게이트는 앱에서 진행한다.',
   },
   shortform: {
