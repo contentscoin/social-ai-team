@@ -1048,6 +1048,48 @@ function switchDock(name) {
 }
 for (const b of $$('#dock-seg button')) b.onclick = () => switchDock(b.dataset.dock);
 
+// ---- dock: 폭 조절 (좌측 가장자리 드래그, 더블클릭 = 기본 폭) -------------------------------
+(() => {
+  const dock = $('#dock');
+  const grip = $('#dock-resizer');
+  if (!dock || !grip) return;
+  const DEFAULT_W = 400;
+  const MIN_W = 280;
+  const maxW = () => Math.max(MIN_W, Math.floor(window.innerWidth * 0.6));
+  const clamp = (w) => Math.min(maxW(), Math.max(MIN_W, Math.round(w)));
+  const apply = (w) => { dock.style.width = clamp(w) + 'px'; };
+  // 저장된 폭 복원 — 창이 줄어든 상태로 켜져도 화면을 넘지 않게 클램프
+  const saved = Number(localStorage.getItem('dockWidth'));
+  if (saved) apply(saved);
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = dock.getBoundingClientRect().width;
+    document.body.classList.add('dock-resizing');
+    const move = (ev) => apply(startW + (startX - ev.clientX)); // 왼쪽으로 끌면 넓어진다
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('dock-resizing');
+      localStorage.setItem('dockWidth', String(Math.round(dock.getBoundingClientRect().width)));
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    apply(DEFAULT_W);
+    localStorage.setItem('dockWidth', String(DEFAULT_W));
+  });
+  // 창 크기가 줄면 저장 폭이 화면을 삼키지 않게 재클램프
+  window.addEventListener('resize', () => {
+    const w = dock.getBoundingClientRect().width;
+    if (w > maxW()) apply(w);
+  });
+})();
+
 async function renderHistory() {
   const box = $('#dock-history');
   if (!S.client) { box.innerHTML = '<p class="muted" style="padding:14px">클라이언트를 선택하세요</p>'; return; }
