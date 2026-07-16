@@ -2,6 +2,8 @@
 // 프로토콜: JSON-RPC 2.0 (initialize → tools/call). 엔드포인트는 사용자 시크릿
 // (settings → 렌더 → OpenCrab, 예: https://opencrab.sh/api/mcp/<token>).
 // 로드한 팩은 ~/.social-ai-team/packs/에 저장돼 promptlab 컴파일러가 참조한다.
+const fs = require('fs');
+const path = require('path');
 const secrets = require('./secrets');
 const promptlab = require('./promptlab');
 
@@ -35,7 +37,7 @@ function endpointOrThrow() {
 async function init(ep) {
   return rpc(ep, 1, 'initialize', {
     protocolVersion: '2025-06-18', capabilities: {},
-    clientInfo: { name: 'social-ai-team-desktop', version: '0.11.0' },
+    clientInfo: { name: 'social-ai-team-desktop', version: '0.17.0' },
   });
 }
 function textOf(result) {
@@ -151,11 +153,9 @@ async function ingest(items, projectId) {
     note: truncated ? `${truncated}개 문서가 200KB로 잘렸습니다` : undefined };
 }
 
-// 팩 내용 로드 — 서버의 콘텐츠 도구를 탐색해 시도, 없으면 메타데이터를 참조 노트로 저장
+// 팩 본문 가져오기 — 서버의 콘텐츠 도구를 탐색해 시도, 없으면 메타데이터를 참조 노트로 폴백
 const CONTENT_TOOL_CANDIDATES = /get_pack|pack_content|export_pack|pack_docs|fetch_pack|load_pack|pack_detail/i;
-async function load(pack) {
-  const ep = endpointOrThrow();
-  await init(ep);
+async function fetchBody(ep, pack) {
   let tools = [];
   try {
     const tl = await rpc(ep, 3, 'tools/list', {});
@@ -177,10 +177,42 @@ async function load(pack) {
   if (!body) {
     body = `# ${pack.title} (OpenCrab 팩 — 메타데이터)\n\n` +
       `- 카테고리: ${pack.category}\n- 태그: ${(pack.tags || []).join(', ')}\n- 문서 수: ${pack.docs}\n\n${pack.description}\n\n` +
-      `(이 서버는 팩 본문 도구를 제공하지 않아 메타데이터만 저장했습니다. 컴파일러가 참조 노트로 사용합니다.)`;
+      `(이 서버는 팩 본문 도구를 제공하지 않아 메타데이터만 저장했습니다.)`;
   }
+  return { body, via };
+}
+
+// 팩 로드 (전역 시각 컴파일러용) — ~/.social-ai-team/packs/ 에 저장, promptlab이 이미지/영상 프롬프트에 참조
+async function load(pack) {
+  const ep = endpointOrThrow();
+  await init(ep);
+  const { body, via } = await fetchBody(ep, pack);
   const saved = promptlab.savePack(`opencrab-${pack.title}`, body);
   return { ok: true, file: saved.file, via };
 }
 
-module.exports = { search, load, createProject, ingest };
+// 팩을 "채널 카피 전략"으로 로드 — 클라이언트 폴더에 채널 스코프로 저장한다.
+// 시각 컴파일러(전역 packs)와 분리해, 상위노출 훅·포맷·타이밍이 카피(threads-writer 등) 경로로만 흐르게 한다.
+// copywriter 에이전트가 배정 플랫폼의 이 파일을 읽어 best-performers급 리듬 레퍼런스로 미러링한다.
+async function loadToChannel(pack, dir, channel) {
+  if (!dir) throw new Error('클라이언트 폴더가 필요합니다 — 클라이언트를 먼저 선택하세요');
+  const ch = String(channel || '').trim().toLowerCase().replace(/[^\w가-힣-]/g, '');
+  if (!ch) throw new Error('채널을 지정하세요 (예: threads, instagram, x, linkedin)');
+  const ep = endpointOrThrow();
+  await init(ep);
+  const { body, via } = await fetchBody(ep, pack);
+  const outDir = path.join(dir, 'context', 'strategy');
+  fs.mkdirSync(outDir, { recursive: true });
+  // extract()가 만드는 channel-<ch>.md(파생 전략)를 덮어쓰지 않게 별도 -topexposure 파일로 저장.
+  // listStrategies()의 channel- 접두 규약을 따라 전략 목록에도 채널로 잡힌다.
+  const file = `channel-${ch}-topexposure.md`;
+  const header =
+    `# ${ch} 상위노출 레퍼런스 — ${pack.title} (OpenCrab)\n\n` +
+    `> 이 문서는 OpenCrab 팩 "${pack.title}"의 본문입니다. **${ch} 채널에서 상위노출된 글을 분석한 훅·포맷·타이밍 온톨로지**로,\n` +
+    `> copywriter 에이전트가 이 채널 카피를 쓸 때 best-performers급 레퍼런스로 리듬을 미러링합니다.\n` +
+    `> (자동 생성 — 재로드 시 덮어쓰기됩니다. 파생 전략은 channel-${ch}.md 를 참조.)\n\n---\n\n`;
+  fs.writeFileSync(path.join(outDir, file), header + body);
+  return { ok: true, file: `context/strategy/${file}`, channel: ch, via };
+}
+
+module.exports = { search, load, loadToChannel, createProject, ingest };

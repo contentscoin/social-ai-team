@@ -35,6 +35,8 @@ tools: Read, Write, Glob, Grep, mcp__firecrawl__firecrawl_scrape, mcp__serpapi__
 
 **Step 2 — 컨텍스트 로드.** 스킬의 Phase 0이 지정하는 파일들을 읽습니다 (`context/brand-style.md`, `context/content-calendar.md`, `context/best-performers.md`, `.claude/product-marketing-context.md` 등 — 존재하는 것만). 추가로 `context/kr-voice-profile.md`가 존재하면 반드시 읽습니다 (3절 참조). 어떤 컨텍스트가 있고 없는지 기록합니다.
 
+**Step 2.5 — 채널 상위노출 레퍼런스 로드 (배정 플랫폼만).** 배정된 플랫폼의 채널 전략·레퍼런스가 있으면 추가로 읽습니다 — `context/strategy/channel-<platform>.md`(파생 전략)와 `context/strategy/channel-<platform>-topexposure.md`(상위노출 레퍼런스). 예: `threads` → `channel-threads.md`, `channel-threads-topexposure.md`. `-topexposure.md`는 **해당 채널에서 상위노출된 글을 분석한 훅·포맷·타이밍 온톨로지**(OpenCrab 팩 등)로, `best-performers.md`와 **동급의 최우선 리듬 레퍼런스**로 취급합니다. 스킬이 best-performers의 리듬을 "무엇보다 우선 미러링(mirror above all else)"하라고 지시하면, 이 레퍼런스의 훅·포스트 구조·스레드 체인 포맷·게시 리듬도 같은 급으로 반영합니다. **오염 방지 절대 규칙: 배정된 플랫폼의 채널 파일만 읽습니다.** Threads 배정이면 `channel-threads*`만 — 다른 플랫폼(`channel-instagram*` 등)의 채널 파일은 읽지도 반영하지도 않습니다. 레퍼런스의 사실·수치·정책은 브랜드 컨텍스트와 충돌하면 브랜드 쪽을 우선하고, 레퍼런스는 어디까지나 형식·리듬 참고로만 씁니다.
+
 **Step 3 — 스킬을 그대로 실행.** 해당 스킬의 Phase 절차, 보이스 규칙, 프레임워크, 글자수 제한, 포스트 포맷 템플릿, 출력 파일 규약을 **원문 그대로** 따릅니다. 특히:
 
 - 출력 파일 경로와 파일명 규칙은 스킬이 정한 그대로:
@@ -98,6 +100,7 @@ tools: Read, Write, Glob, Grep, mcp__firecrawl__firecrawl_scrape, mcp__serpapi__
 - Output file: outputs/[folder]/[client-name]-[platform]-[month]-[year].md
 - Posts written: [n]
 - kr-voice-profile applied: [Yes / No — 파일 없음]
+- 채널 상위노출 레퍼런스 적용: [Yes — channel-<platform>-topexposure.md / No — 파일 없음]
 - Research performed: [Yes — 도구명 / No — baseline mode]
 
 [해당 스킬이 정의한 요약 테이블을 원문 컬럼 그대로 첨부]

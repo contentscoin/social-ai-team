@@ -1838,16 +1838,34 @@ async function renderPackSection(root) {
     res.innerHTML = '<span class="muted">검색 중…</span>';
     const r = await window.api.packs.ocSearch($('#oc-q', box).value || '프롬프트 이미지 영상');
     if (!r || r.error || !r.ok) { res.innerHTML = `<span style="color:var(--warn)">${esc((r && r.error) || '검색 실패 — 엔드포인트를 확인하세요')}</span>`; return; }
+    const chOpts = ['threads', 'instagram', 'facebook', 'x', 'linkedin', 'naver']
+      .map((c) => `<option value="${c}">${c}</option>`).join('');
     res.innerHTML = r.packs.length ? r.packs.map((p, i) =>
-      `<div class="env-row" style="padding:4px 0"><b>${esc(p.title)}</b> <span class="chip tiny">${esc(p.category)}</span>
-       <span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px">${esc(p.description.slice(0, 60))}</span>
-       <button class="chip tiny" data-ocload="${i}">가져오기</button></div>`).join('') : '<p class="muted">결과 없음</p>';
+      `<div class="env-row" style="padding:6px 0;flex-wrap:wrap;gap:4px"><b>${esc(p.title)}</b> <span class="chip tiny">${esc(p.category)}</span>
+       <span class="muted" style="flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 6px">${esc(p.description.slice(0, 60))}</span>
+       <button class="chip tiny" data-ocload="${i}" title="시각(이미지·영상) 컴파일러용 전역 팩으로 저장">시각 팩</button>
+       <select class="chip tiny" data-occh="${i}" title="이 팩을 현재 클라이언트의 선택 채널 카피 전략으로 로드">${chOpts}</select>
+       <button class="chip tiny" data-occhload="${i}" title="상위노출 훅·포맷을 이 채널 카피(예: threads-writer)가 미러링">채널 카피로</button></div>`).join('')
+      + '<p class="muted small" style="margin-top:6px">· <b>시각 팩</b>: 이미지/영상 프롬프트 컴파일러가 참조 (전역). · <b>채널 카피로</b>: 상위노출 훅·포맷을 그 채널 글쓰기(threads-writer 등)가 미러링 (현재 클라이언트 전용).</p>'
+      : '<p class="muted">결과 없음</p>';
     for (const b of $$('[data-ocload]', box)) b.onclick = async () => {
       b.disabled = true; b.textContent = '로딩…';
       const lr = await window.api.packs.ocLoad(r.packs[Number(b.dataset.ocload)]);
-      if (lr && lr.ok) { toast(`팩 저장됨: ${lr.file}${lr.via === 'metadata' ? ' (메타데이터만 — 본문 도구 미제공 서버)' : ''}`); refreshList(); }
+      if (lr && lr.ok) { toast(`시각 팩 저장됨: ${lr.file}${lr.via === 'metadata' ? ' (메타데이터만 — 본문 도구 미제공 서버)' : ''}`); refreshList(); }
       else toast('가져오기 실패: ' + ((lr && lr.error) || ''));
-      b.disabled = false; b.textContent = '가져오기';
+      b.disabled = false; b.textContent = '시각 팩';
+    };
+    for (const b of $$('[data-occhload]', box)) b.onclick = async () => {
+      if (!S.client) { toast('클라이언트를 먼저 선택하세요'); return; }
+      const i = Number(b.dataset.occhload);
+      const ch = ($(`[data-occh="${i}"]`, box) || {}).value || 'threads';
+      b.disabled = true; b.textContent = '로딩…';
+      try {
+        const lr = await window.api.packs.ocLoadChannel(r.packs[i], S.client.dir, ch);
+        if (lr && lr.ok) { toast(`${ch} 채널 카피 전략에 로드: ${lr.file}${lr.via === 'metadata' ? ' (메타데이터만)' : ''}`); refreshStrat(); }
+        else toast('채널 로드 실패: ' + ((lr && lr.error) || ''));
+      } catch (e) { toast('채널 로드 실패: ' + e.message); }
+      b.disabled = false; b.textContent = '채널 카피로';
     };
   };
 }

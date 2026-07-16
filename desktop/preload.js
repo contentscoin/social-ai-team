@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
     delete: (file) => ipcRenderer.invoke('packs:delete', file),
     ocSearch: (query) => ipcRenderer.invoke('oc:search', query),
     ocLoad: (pack) => ipcRenderer.invoke('oc:load', pack),
+    ocLoadChannel: (pack, dir, channel) => ipcRenderer.invoke('oc:loadChannel', pack, dir, channel),
   },
   strat: {
     extract: (dir) => ipcRenderer.invoke('strat:extract', dir),
